@@ -1,0 +1,14 @@
+#!/bin/bash
+#
+# Remove duplicate lines in files (reduces empty lines to 1 line)
+
+input="/etc/ssh/sshd_config"
+output="/etc/ssh/sshd_config.test"
+
+# Comment out if you need to use this file
+if [ "$input" == "/etc/ssh/sshd_config" ]; then
+    echo "Error: Make sure the edit the script before use"
+    exit 1
+fi
+
+awk 'NF {if (!seen[$0]++) print; last_line_empty=0} !NF {if (!last_line_empty) print; last_line_empty=1}' $input > $output

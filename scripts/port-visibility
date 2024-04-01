@@ -1,0 +1,22 @@
+#!/bin/bash
+#
+# This script checks what servers can be reached by port
+# copy this file to an _folder and edit it to use it
+# nmap is required: if the server has no nmap it will fail
+
+subnet="192.168.1.0/24"
+port=22
+
+# Disable this check if you need to test this subnet (comment it out)
+if [ "$subnet" == "192.168.1.0/24" ]; then
+    echo "Error: Make sure the edit the script before use"
+    exit 1
+fi
+
+if which nmap &> /dev/null; then
+    nmap -n -Pn -p $port $subnet -oG - | grep "open:" | awk '{ print $2 }'
+else
+    echo "NMAP not installed on this server"
+    exit 1 
+fi
+

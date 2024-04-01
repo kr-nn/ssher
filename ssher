@@ -1,0 +1,517 @@
+#!/bin/bash
+#
+# What is this?
+# This is a general tool for SSH and auditability. No need to learn complex software like ansible
+# This is a simpler quicker to RnD ansible
+# This is a simpler tool that uses only 1 dependancy and it's optional: sshpass
+# Otherwise all you need is a posix compliant shell and ssh
+#
+# What is it not?
+# This is NOT a state management or configuration management engine.
+# This does NOT replace SALT/puppet/Chef
+# This will not expand past a few simple but robust capabilities
+
+## Initialize variables
+# formatting
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CLEAR='\033[0m' 
+
+# options
+mode=0
+inventory=0
+username=0
+password=0
+idfile=0
+localfile=0
+remotefile=0
+cmd=0
+
+passconfirm=0
+
+# Check if sshpass can be used
+if which sshpass &> /dev/null; then
+    sshpass=1
+else
+    echo -e "${RED}"
+    echo "WARNING: sshpass not installed or not in path."
+    echo "You will need to install it if you don't want to enter passwords manually"
+    echo -ne "${CLEAR}"
+    sshpass=0
+fi
+
+# Help Dialog
+show_help() {
+  echo -e "
+$(printf '=%.0s' $(seq 1 $(tput cols)))
+ ${GREEN}███████╗███████╗██╗  ██╗███████╗██████╗ 
+ ${GREEN}██╔════╝██╔════╝██║  ██║██╔════╝██╔══██╗
+ ${GREEN}███████╗███████╗███████║█████╗  ██████╔╝
+ ${GREEN}╚════██║╚════██║██╔══██║██╔══╝  ██╔══██╗
+ ${GREEN}███████║███████║██║  ██║███████╗██║  ██║
+ ${GREEN}╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝${CLEAR}
+$(printf '=%.0s' $(seq 1 $(tput cols)))
+  Usage:${RED} $0 ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command']
+  
+  Options:
+ ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'ins', 'download', 'upload', or 'man'.
+ ${RED}                          ${GREEN}use 'debug' to get output of the options per server
+ ${RED}                          ${GREEN}This option is required.
+ ${RED} 
+ ${RED}                          ${GREEN}run       =  Run a command on all the servers
+ ${RED}                          ${GREEN}script    =  Like run except runs a full script you have locally. If you need to run a script on the server or from a remote location use the run mode.
+ ${RED}                          ${GREEN}ping      =  Test SSH access to servers, reports the auth mechanism
+ ${RED}                          ${GREEN}ins       =  Add contents of a local file to a target file on the server. Good for pushing public keys with password mode (better than ssh-copy-id)
+ ${RED}                          ${GREEN}download  =  Pull contents from remote servers to the local server. Great for auditing/updating configurations. 
+ ${RED}                          ${GREEN}upload    =  Push contents from local server to the remote servers. Great for uploading configurations. 
+ ${RED}                          ${GREEN}man       =  Run tasks on the servers manually in sequence. (Good for when you need to authenticate using run) (Good for macros)
+ ${RED}                          ${GREEN}debug     =  output what is going to run on each server. Useful when using special variables to change things dynamically
+ ${RED} 
+ ${RED}   -i inventory_file      ${GREEN}Path to the file containing a list of server hostnames or IP addresses.
+ ${RED}                          ${GREEN}This option is required.
+ ${RED} 
+ ${RED}   -p                     ${GREEN}Prompts for a password for password authentication. (THIS REQUIRES SSHPASS)
+ ${RED}                          ${GREEN}If not provided, you will have to enter the password for each server that needs it.
+ ${RED}                          ${GREEN}Not using this is useful when you have different passwords on different servers
+ ${RED} 
+ ${RED}   -l local_file          ${GREEN}Specifies the file which content to push. Optional.
+ ${RED}                          ${GREEN}Default is your public key 'id_rsa.pub'.
+ ${RED}                          ${GREEN}Used in script mode to define the script you want to run
+ ${RED} 
+ ${RED}   -r remote_file         ${GREEN}Specifies the file to push local file contents to. Optional.
+ ${RED}                          ${GREEN}Default is the remote authorized keys file 'authorized_keys'.
+ ${RED} 
+ ${RED}   -s Private_key         ${GREEN}Specifies the identity key file to use for authentication. Optional.
+ ${RED}                          ${GREEN}Default is 'id_rsa'.
+ ${RED} 
+ ${RED}   -u username            ${GREEN}Specifies the username for the operation. Optional.
+ ${RED}                          ${GREEN}Default is the current user's username.
+ ${RED} 
+ ${RED}   -c command             ${GREEN}The command to run when in run mode.
+ ${RED}                          ${GREEN}Wrap with \"\" when there's spaces (most of the time)
+ ${RED} 
+  Examples:
+   ${RED}$0 ${GREEN}-m run -i oldservers.txt -c 'apt update && apt upgrade -y && apt autoremove -y'                    ${CLEAR}# Update a list of servers
+   ${RED}$0 ${GREEN}-m ping -i serversthatshouldbelocked.txt -u root -p | tee sshaudit.txt                             ${CLEAR}# Check what servers are not secured
+   ${RED}$0 ${GREEN}-m ins -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
+   ${RED}$0 ${GREEN}-m ins -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
+   ${RED}$0 ${GREEN}-m man -i bootstrapthese.txt -u root -p                                                            ${CLEAR}# Manually perform common tasks back to back
+   ${RED}$0 ${GREEN}-m ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
+   ${RED}$0 ${GREEN}-m script -i servers.txt -u root -l ~/.local/bin/profileconfig.sh                                  ${CLEAR}# configure your shell profile on all servers
+   ${RED}$0 ${GREEN}-m download -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
+   ${RED}$0 ${GREEN}-m upload -i servers.txt -u root -l ~/.confs/static_ips -r /etc/networking/interfaces              ${CLEAR}# after downloading interfaces files you and update them, then upload them
+   ${RED}$0 ${GREEN}-m run -i servers.txt -u root -c 'reboot'                                                          ${CLEAR}# reboot all servers
+   ${RED}$0 ${GREEN}-m run -i servers.txt -u root -c 'systemctl --failed'                                              ${CLEAR}# list all failed services in your network
+
+  PROTIPS:
+  ${RED}building inventories is easy with nmap:${GREEN} nmap -n -Pn -p 22 192.168.4.0/24 -oG - | grep "open" | awk '{ print $2 }'
+
+  ${RED}Create a Report that you can read:${CLEAR} ${GREEN}$0 -m ping -i ips.list |tee date.report${CLEAR} # This outputs the color mask for bash, make sure to cat the file to get the color output appropriately
+                                                                  ${GREEN}cat date.report${CLEAR} # vim does not render ANSI escape codes without help use cat, more, less as much as you can
+
+$(printf '=%.0s' $(seq 1 $(tput cols)))" | less
+}
+
+# Parse options
+while getopts ":m:i:u:s:pl:r:c:" opt; do
+  case $opt in
+    m) mode="$OPTARG";;
+    i) inventory="$OPTARG";;
+    p) password="1";;
+    l) localfile="$OPTARG";;
+    r) remotefile="$OPTARG";;
+    s) idfile="$OPTARG";;
+    u) username="$OPTARG";;
+    c) cmd="$OPTARG";;
+    *) show_help; exit 1;;
+  esac
+done
+
+## Set Defaults ================================
+
+# id to auth as
+if [ "$idfile" == 0 ]; then
+    idfile="/home/$USER/.ssh/id_rsa"
+fi
+
+# content to push to server file
+if [ "$localfile" == 0 ]; then
+    localfile="/home/$USER/.ssh/id_rsa.pub"
+fi
+
+# remote file content goes to
+if [ "$remotefile" == 0 ]; then
+    remotefile=".ssh/authorized_keys"
+fi
+
+# user to ssh as
+if [ "$username" == 0 ]; then
+    username=$USER
+fi
+
+## Failures ====================================
+# Fail if there is no mode
+if [ "$mode" == 0 ] || [ "$inventory" == 0 ]; then
+    show_help
+    exit 1
+fi
+
+# Fail to run if using a pass and sshpass is not installed
+if [ $sshpass -eq 0 ] && [ $password == "1" ]; then
+    echo "FATAL: Using -p with sshpass not available."
+    exit 1
+fi
+
+# Fail if inventory file is not found
+if [ ! -f "$inventory" ]; then
+    echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."
+    exit 1
+fi
+
+# Fail if idfile is not found
+if [ ! -f $idfile ]; then
+    echo "FATAL: Selected private key (${idfile}) doesn't seem to exist. Check your ssh folder."
+    exit 1
+fi
+
+
+## Password prompt =============================
+# Ask for password prompt, if password is asked for
+if [ "$password" == "1" ]; then
+    read -s -p "Input the password: " password 
+fi
+
+# Insert mode if need to append or overwrite 
+if [ $mode == "ins" ]; then
+    echo ""
+    read -r -p "Append or overwrite? [a/o] " write
+        case "$write" in
+            [oO])
+                overwrite=1
+                ;;
+            *)
+                overwrite=0
+                ;;
+        esac
+fi
+
+## Confirm run ==================================
+echo ""
+echo -e "Private Key: ${GREEN}$idfile${CLEAR} (change with -s)"
+echo -e "local file: ${GREEN}$localfile${CLEAR} (change with -l)"
+
+if [[ $overwrite == 1 ]]; then
+    echo -e "Write mode:${RED}Overwrite${CLEAR}" 
+elif [[ $overwrite == 0 ]]; then
+    echo -e "Write mode:${GREEN}Append${CLEAR}" 
+fi 
+if [ $remotefile != 0 ]; then
+    echo -e "remote file: ${GREEN}$remotefile${CLEAR}"
+fi
+
+echo -e "Username: ${GREEN}$username${CLEAR} (change with -u)"
+echo -e "Servers to attempt (cat the file if you're unsure): ${GREEN}$inventory${CLEAR}"
+
+if [ "$cmd" != 0 ]; then
+    echo -e "Command: ${GREEN}$cmd${CLEAR}"
+fi
+
+countdowntime=3
+while [ $countdowntime -gt 0 ]; do
+    echo -ne "${RED}Make sure to read this! $countdowntime\033[0K\r${CLEAR}"
+    sleep 1
+    countdowntime=$((countdowntime-1))
+done
+
+read -r -p "Are you sure you want to run this? [y/n] " confirm
+case "$confirm" in
+    [yY][eE][sS]|[yY]) 
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+echo ""
+echo "=============================================================="
+
+## Modes ======================================== 
+run() {
+    # Fail if no command
+    if [ "$6" == 0 ]; then
+        echo "FATAL: you need -c to run a command on the servers"
+        exit 0
+    fi
+
+    # Fail if no command
+    if [ "$6" == '' ]; then
+        echo "FATAL: empty commands make your shell broken"
+        exit 0
+    fi
+
+    for server in `cat $1`; do
+        # No password
+        if [ $2 == 0 ]; then
+            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "${6}" 2>&1)
+            ssh_status=$?
+        # Password
+        else
+            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "${6}" 2>&1)
+            ssh_status=$?
+        fi
+        
+        if [ $ssh_status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    done
+}
+
+script() {
+    # fail if option is missing
+    if [ "$3" == 0 ]; then
+        echo "FATAL: you need -l to choose a script file locally"
+        exit 0
+    fi
+
+    # Fail if local file is not found
+    if [ ! -f $3 ]; then
+        echo "FATAL: Selected local file (${3}) doesn't seem to exist. Check your pwd."
+        exit 1
+    fi
+
+    for server in `cat $1`; do
+        # No password
+        if [ $2 == 0 ]; then
+            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} 'bash -s' < ${3} 2>&1)
+            ssh_status=$?
+        # Password
+        else
+            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} 'bash -s' < ${3} 2>&1)
+            ssh_status=$?
+        fi
+        
+        if [ $ssh_status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    done
+}
+
+ping() {
+    for server in `cat $1`; do
+        # No password
+        if [ $2 == 0 ]; then
+            ssh_output=$(ssh -v -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} exit 2>&1)
+            ssh_status=$?
+        # Password
+        else
+            ssh_output=$(sshpass -p $2 ssh -v -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} exit 2>&1)
+            ssh_status=$?
+        fi
+
+        if [ $ssh_status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            if echo "$ssh_output" | grep -q "Server accepts key:"; then
+                echo -e "${GREEN}Public key authentication${CLEAR}" 
+            else
+                echo -e "${YELLOW}Password Authentication${CLEAR}"
+            fi
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    done
+}
+
+ins() {
+    # Fail if requirements are missing
+    if [ "$3" == 0 ]; then
+        echo "FATAL: you need -l to have content to push"
+        exit 0
+    fi
+
+    if [ "$7" == 0 ]; then
+        echo "FATAL: you need -r to push the content to"
+        exit 0
+    fi
+
+    # Fail if local file is not found
+    if [ ! -f $3 ]; then
+        echo "FATAL: Selected local file (${3}) doesn't seem to exist. Check your pwd."
+        exit 1
+    fi
+
+    for server in `cat $1`; do
+        # No password
+        if [ $2 == 0 ]; then
+            ssh_output=$(cat $3 | ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
+            ssh_status=$?
+        # Password
+        else
+            ssh_output=$(cat $3 |sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
+            ssh_status=$?
+        fi
+
+        if [ $ssh_status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "Wrote: $3"
+            echo "To: $7"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    done
+}
+
+download() {
+
+    if [ "$3" == 0 ]; then
+        echo "FATAL: you need -l to put the content somewhere"
+        exit 0
+    fi
+
+    if [ "$7" == 0 ]; then
+        echo "FATAL: you need -r to pull the content"
+        exit 0
+    fi
+
+    for server in `cat $1`; do
+        # No password
+        if [ $2 == 0 ]; then
+            echo "" >> $3
+            echo "##\$\$##| ${server} |##\$\$##" >> $3
+            #echo "d3l1m1t3r====|  |====d3l1m1t3r" >> $3
+            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat ${7}" >> ${3})
+            ssh_status=$?
+        # Password
+        else
+            echo "" >> $3
+            echo "##\$\$##| ${server} |##\$\$##" >> $3
+            #echo "d3l1m1t3r====|  |====d3l1m1t3r" >> $3
+            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat ${7}" >> ${3} 2>&1)
+            ssh_status=$?
+        fi
+
+        if [ $ssh_status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "Wrote: $7"
+            echo "To: $3"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    done
+}
+
+#upload() {
+#    for server in `cat $1`; do
+#        sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" $3 | sed '/^$/d'
+#    done
+#}
+
+upload() {
+
+    if [ "$3" == 0 ]; then
+        echo "FATAL: you need -l to push the content somewhere"
+        exit 0
+    fi
+    if [ "$7" == 0 ]; then
+        echo "FATAL: you need -r to put the content somewhere"
+        exit 0
+    fi
+
+    for server in `cat $1`; do
+        # No password
+        content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" $3 | sed '/^$/d')
+        if [ $2 == 0 ]; then
+            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "echo $content > ${7}" 2>&1)
+            ssh_status=$?
+        # Password
+        else
+            echo "# ============================ ${server} ==================================="
+            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "echo $content > ${7}" 2>&1)
+            ssh_status=$?
+        fi
+
+        if [ $ssh_status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "Wrote: $3"
+            echo "To: $7"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    done
+}
+
+man() {
+    for server in `cat $1`; do
+        # No password
+        if [ $2 == 0 ]; then
+            ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server}
+        # Password
+        else
+            sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server}
+        fi
+    done
+}
+
+debug() {
+    for server in `cat $1`; do
+        echo "=============================================================="
+        echo -e "${GREEN}debug mode - ${server}${CLEAR}"
+        echo "--------------------------------------------------------------"
+        echo -e "Inventory:   ${GREEN}  $1  ${CLEAR}"
+        echo -e "Username:    ${GREEN}  $5  ${CLEAR}"
+        echo -e "Idfile:      ${GREEN}  $4  ${CLEAR}"
+        echo -e "Password:    ${GREEN}  $2  ${CLEAR}"
+        echo -e "local file:  ${GREEN}  $3  ${CLEAR}"
+        echo -e "remote file: ${GREEN}  $7  ${CLEAR}"
+        echo -e "Command:     ${GREEN}  $6  ${CLEAR}"
+    done
+}
+
+# Main logic based on mode
+case $mode in
+  "run") run $inventory $password $localfile $idfile $username "$cmd" $debug;;
+  "script") script $inventory $password $localfile $idfile $username "$cmd" $debug;;
+  "ping") ping $inventory $password $localfile $idfile $username $cmd $debug;;
+  "ins") ins $inventory $password $localfile $idfile $username $cmd $remotefile;;
+  "download") download $inventory $password $localfile $idfile $username $cmd $remotefile;;
+  "upload") upload $inventory $password $localfile $idfile $username $cmd $remotefile;;
+  "man") man $inventory $password $localfile $idfile $username $cmd $debug;;
+  "debug") debug $inventory $password $localfile $idfile $username $cmd $debug;;
+  *) show_help; exit 1;;
+esac
+
