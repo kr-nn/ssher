@@ -17,8 +17,11 @@ the .gitignore files contains \_* so it will ignore all files and folders that s
 It is best to copy scripts to \_scripts and edit them as needed.
 Files that are not explicitly going to by synced to the repo should be in an _ folder
 For ex.
+
 `nmap -n -Pn -p 22 10.0.0.1/24 -oG - | grep "open:" | awk '{ print $2 }' >> _inventories/ lan.ips`
+
 or 
+
 `./ssher -m ping -i _inventories/lan.ips -u root -p | tee _reports/root_ssh.report`
 
 Don't forget to read the help dialog on how to use ssher
