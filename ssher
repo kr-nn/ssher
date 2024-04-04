@@ -137,12 +137,12 @@ fi
 
 # content to push to server file
 if [ "$localfile" == 0 ]; then
-    localfile="/home/$USER/.ssh/id_rsa.pub"
+    localfile="$HOME/.ssh/id_rsa.pub"
 fi
 
 # remote file content goes to
 if [ "$remotefile" == 0 ]; then
-    remotefile=".ssh/authorized_keys"
+    remotefile="$HOME/.ssh/authorized_keys"
 fi
 
 # user to ssh as
