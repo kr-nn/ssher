@@ -132,7 +132,7 @@ done
 
 # id to auth as
 if [ "$idfile" == 0 ]; then
-    idfile="/home/$USER/.ssh/id_rsa"
+    idfile="$HOME/.ssh/id_rsa"
 fi
 
 # content to push to server file
