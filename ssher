@@ -142,7 +142,7 @@ fi
 
 # remote file content goes to
 if [ "$remotefile" == 0 ]; then
-    remotefile="$HOME/.ssh/authorized_keys"
+    remotefile="~/.ssh/authorized_keys"
 fi
 
 # user to ssh as
@@ -203,7 +203,7 @@ echo -e "local file: ${GREEN}$localfile${CLEAR} (change with -l)"
 
 if [[ $overwrite == 1 ]]; then
     echo -e "Write mode:${RED}Overwrite${CLEAR}" 
-elif [[ $overwrite == 0 ]]; then
+else
     echo -e "Write mode:${GREEN}Append${CLEAR}" 
 fi 
 if [ $remotefile != 0 ]; then
@@ -362,13 +362,24 @@ ins() {
 
     for server in `cat $1`; do
         # No password
-        if [ $2 == 0 ]; then
-            ssh_output=$(cat $3 | ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
-            ssh_status=$?
-        # Password
+        if [[ $overwrite == 1 ]]; then
+            if [ $2 == 0 ]; then
+                ssh_output=$(cat $3 | ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat > ${7}" 2>&1)
+                ssh_status=$?
+            # Password
+            else
+                ssh_output=$(cat $3 |sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat > ${7}" 2>&1)
+                ssh_status=$?
+            fi
         else
-            ssh_output=$(cat $3 |sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
-            ssh_status=$?
+            if [ $2 == 0 ]; then
+                ssh_output=$(cat $3 | ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
+                ssh_status=$?
+            # Password
+            else
+                ssh_output=$(cat $3 |sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
+                ssh_status=$?
+            fi
         fi
 
         if [ $ssh_status -eq 0 ]; then
