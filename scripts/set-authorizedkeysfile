@@ -25,4 +25,4 @@ sed -i '0,/^#\?AuthorizedKeysFile/ s/^#\?AuthorizedKeysFile.*/#MARKER/' $file
 sed -i '/^AuthorizedKeysFile/ d' $file
 
 # Step 4: Replace the marked line with your settings.
-sed -i 's/#MARKER/AuthorizedKeysFile '"$setting"'/' $file
+sed -i "s/#MARKER/AuthorizedKeysFile ${setting}" $file
