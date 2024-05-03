@@ -83,7 +83,7 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}                          ${GREEN}Default is the remote authorized keys file 'authorized_keys'.
  ${RED} 
  ${RED}   -s Private_key         ${GREEN}Specifies the identity key file to use for authentication. Optional.
- ${RED}                          ${GREEN}Default is 'id_rsa'.
+ ${RED}                          ${GREEN}Default is according to your config file or just 'id_rsa'.
  ${RED} 
  ${RED}   -u username            ${GREEN}Specifies the username for the operation. Optional.
  ${RED}                          ${GREEN}Default is the current user's username.
@@ -128,61 +128,61 @@ while getopts ":m:i:u:s:pl:r:c:" opt; do
   esac
 done
 
-## Set Defaults ================================
-
-# id to auth as
-if [ "$idfile" == 0 ]; then
-    idfile="$HOME/.ssh/id_rsa"
-fi
-
-# content to push to server file
-if [ "$localfile" == 0 ]; then
-    localfile="$HOME/.ssh/id_rsa.pub"
-fi
-
-# remote file content goes to
-if [ "$remotefile" == 0 ]; then
-    remotefile="~/.ssh/authorized_keys"
-fi
-
-# user to ssh as
-if [ "$username" == 0 ]; then
-    username=$USER
-fi
-
-## Failures ====================================
-# Fail if there is no mode
+# Fail if there is no mode or inventory ==========================================================
 if [ "$mode" == 0 ] || [ "$inventory" == 0 ]; then
     show_help
     exit 1
 fi
 
-# Fail to run if using a pass and sshpass is not installed
-if [ $sshpass -eq 0 ] && [ $password == "1" ]; then
-    echo "FATAL: Using -p with sshpass not available."
-    exit 1
-fi
-
-# Fail if inventory file is not found
+# Fail if inventory file is not found ==========================================================
 if [ ! -f "$inventory" ]; then
     echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."
     exit 1
 fi
 
-# Fail if idfile is not found
-if [ ! -f $idfile ]; then
-    echo "FATAL: Selected private key (${idfile}) doesn't seem to exist. Check your ssh folder."
+# Default local file ==========================================================
+if [ "$localfile" == 0 ]; then
+    localfile="$HOME/.ssh/id_rsa.pub"
+fi
+
+# Default remote file ==========================================================
+if [ "$remotefile" == 0 ]; then
+    remotefile="~/.ssh/authorized_keys"
+fi
+
+# user to ssh as ==========================================================
+if [ "$username" == 0 ]; then
+    username=$USER
+fi
+
+# If using custom idfile or using default ==========================================================
+if [ "$idfile" == 0 ]; then
+    idfilecmd=""
+    idfile="$HOME/.ssh/id_rsa"
+else
+    idfilecmd="-i ${idfile} "
+fi
+
+# Fail if idfile is not found ==========================================================
+if [ ! -f ${idfile} ]; then
+    echo "FATAL: Selected private key ${idfile} doesn't seem to exist. Check your ssh folder."
     exit 1
 fi
 
-
-## Password prompt =============================
-# Ask for password prompt, if password is asked for
-if [ "$password" == "1" ]; then
-    read -s -p "Input the password: " password 
+# Fail to run if using a pass and sshpass is not installed ==========================================================
+if [ $sshpass -eq 0 ] && [ $password == "1" ]; then
+    echo "FATAL: Using -p with sshpass not available."
+    exit 1
 fi
 
-# Insert mode if need to append or overwrite 
+## Password prompt =============================
+
+# Ask for password prompt, if password is asked for
+if [ "$password" == "1" ]; then
+    read -s -p "Input the password: " password
+fi
+
+## Insert mode prompt =============================
 if [ $mode == "ins" ]; then
     echo ""
     read -r -p "Append or overwrite? [a/o] " write
@@ -195,6 +195,17 @@ if [ $mode == "ins" ]; then
                 ;;
         esac
 fi
+
+# If using sshpass ==========================================================
+if [ $password == 0 ]; then
+    passwordcmd=""
+else
+    passwordcmd="sshpass -p ${password} "
+    passwordcmdredacted="sshpass -p REDACTED "
+fi
+
+sshcmdredacted="${passwordcmdredacted}ssh ${idfilecmd}-o StrictHostKeyChecking=no -o ConnectTimeout=8 "
+sshcmd="${passwordcmd}ssh ${idfilecmd}-o StrictHostKeyChecking=no -o ConnectTimeout=8 "
 
 ## Confirm run ==================================
 echo ""
@@ -216,6 +227,8 @@ echo -e "Servers to attempt (cat the file if you're unsure): ${GREEN}$inventory$
 if [ "$cmd" != 0 ]; then
     echo -e "Command: ${GREEN}$cmd${CLEAR}"
 fi
+
+echo -e "SSH: ${GREEN}${sshcmdredacted}${CLEAR}"
 
 countdowntime=3
 while [ $countdowntime -gt 0 ]; do
@@ -250,16 +263,10 @@ run() {
     fi
 
     for server in `cat $1`; do
-        # No password
-        if [ $2 == 0 ]; then
-            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "${6}" 2>&1)
-            ssh_status=$?
-        # Password
-        else
-            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "${6}" 2>&1)
-            ssh_status=$?
-        fi
-        
+
+        ssh_output=$($sshcmd $5@${server} "${6}" 2>&1)
+        ssh_status=$?
+
         if [ $ssh_status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
             echo "--------------------------------------------------------------"
@@ -288,16 +295,10 @@ script() {
     fi
 
     for server in `cat $1`; do
-        # No password
-        if [ $2 == 0 ]; then
-            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} 'bash -s' < ${3} 2>&1)
-            ssh_status=$?
-        # Password
-        else
-            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} 'bash -s' < ${3} 2>&1)
-            ssh_status=$?
-        fi
-        
+
+        ssh_output=$($sshcmd $5@${server} 'bash -s' < ${3} 2>&1)
+        ssh_status=$?
+
         if [ $ssh_status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
             echo "--------------------------------------------------------------"
@@ -314,15 +315,9 @@ script() {
 
 ping() {
     for server in `cat $1`; do
-        # No password
-        if [ $2 == 0 ]; then
-            ssh_output=$(ssh -v -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} exit 2>&1)
-            ssh_status=$?
-        # Password
-        else
-            ssh_output=$(sshpass -p $2 ssh -v -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} exit 2>&1)
-            ssh_status=$?
-        fi
+
+        ssh_output=$($sshcmd $5@${server} -v exit 2>&1)
+        ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
@@ -361,26 +356,9 @@ ins() {
     fi
 
     for server in `cat $1`; do
-        # No password
-        if [[ $overwrite == 1 ]]; then
-            if [ $2 == 0 ]; then
-                ssh_output=$(cat $3 | ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat > ${7}" 2>&1)
-                ssh_status=$?
-            # Password
-            else
-                ssh_output=$(cat $3 |sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat > ${7}" 2>&1)
-                ssh_status=$?
-            fi
-        else
-            if [ $2 == 0 ]; then
-                ssh_output=$(cat $3 | ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
-                ssh_status=$?
-            # Password
-            else
-                ssh_output=$(cat $3 |sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat >> ${7}" 2>&1)
-                ssh_status=$?
-            fi
-        fi
+
+        ssh_output=$(cat $3 |$sshcmd $5@${server} "cat >> ${7}" 2>&1)
+        ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
@@ -410,21 +388,11 @@ download() {
     fi
 
     for server in `cat $1`; do
-        # No password
-        if [ $2 == 0 ]; then
-            echo "" >> $3
-            echo "##\$\$##| ${server} |##\$\$##" >> $3
-            #echo "d3l1m1t3r====|  |====d3l1m1t3r" >> $3
-            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat ${7}" >> ${3})
-            ssh_status=$?
-        # Password
-        else
-            echo "" >> $3
-            echo "##\$\$##| ${server} |##\$\$##" >> $3
-            #echo "d3l1m1t3r====|  |====d3l1m1t3r" >> $3
-            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "cat ${7}" >> ${3} 2>&1)
-            ssh_status=$?
-        fi
+
+        echo "" >> $3
+        echo "##\$\$##| ${server} |##\$\$##" >> $3
+        ssh_output=$($sshcmd $5@${server} "cat ${7}" >> ${3} 2>&1)
+        ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
@@ -441,12 +409,6 @@ download() {
     done
 }
 
-#upload() {
-#    for server in `cat $1`; do
-#        sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" $3 | sed '/^$/d'
-#    done
-#}
-
 upload() {
 
     if [ "$3" == 0 ]; then
@@ -459,17 +421,11 @@ upload() {
     fi
 
     for server in `cat $1`; do
-        # No password
+
         content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" $3 | sed '/^$/d')
-        if [ $2 == 0 ]; then
-            ssh_output=$(ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "echo $content > ${7}" 2>&1)
-            ssh_status=$?
-        # Password
-        else
-            echo "# ============================ ${server} ==================================="
-            ssh_output=$(sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server} "echo $content > ${7}" 2>&1)
-            ssh_status=$?
-        fi
+        echo "# ============================ ${server} ==================================="
+        ssh_output=$($sshcmd $5@${server} "echo $content > ${7}" 2>&1)
+        ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
@@ -488,13 +444,7 @@ upload() {
 
 man() {
     for server in `cat $1`; do
-        # No password
-        if [ $2 == 0 ]; then
-            ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server}
-        # Password
-        else
-            sshpass -p $2 ssh -i $4 -o StrictHostKeyChecking=no -o ConnectTimeout=8 $5@${server}
-        fi
+        $sshcmd $5@${server}
     done
 }
 
