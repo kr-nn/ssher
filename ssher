@@ -158,14 +158,14 @@ fi
 # If using custom idfile or using default ==========================================================
 if [ "$idfile" == 0 ]; then
     idfilecmd=""
-    idfile="$HOME/.ssh/id_rsa"
+    idfile="$HOME/.ssh/config"
 else
     idfilecmd="-i ${idfile} "
 fi
 
 # Fail if idfile is not found ==========================================================
-if [ ! -f ${idfile} ]; then
-    echo "FATAL: Selected private key ${idfile} doesn't seem to exist. Check your ssh folder."
+if [ ! -f ${idfile} ] ; then
+    echo "FATAL: Selected private key or configuration file ${idfile} doesn't seem to exist."
     exit 1
 fi
 
@@ -204,6 +204,7 @@ else
     passwordcmdredacted="sshpass -p REDACTED "
 fi
 
+# Build confirmation dialog and working ssh command ==============================================
 sshcmdredacted="${passwordcmdredacted}ssh ${idfilecmd}-o StrictHostKeyChecking=no -o ConnectTimeout=8 "
 sshcmd="${passwordcmd}ssh ${idfilecmd}-o StrictHostKeyChecking=no -o ConnectTimeout=8 "
 

@@ -1,0 +1,32 @@
+#!/bin/bash
+if [ -z "$1" ]; then
+  echo "Usage: $0 hostname-from-sshconfig"
+  exit 1
+fi
+ip="$1"
+config_file="$HOME/.ssh/config"
+
+# credit to chatGPT I don't know how this works
+awk -v ip="$ip" '
+/^Host / {
+  if (block ~ "HostName[[:space:]]+" ip) {
+    if (block ~ "IdentityFile[[:space:]]+") {
+      match(block, /IdentityFile[[:space:]]+[^[:space:]]+/, arr)
+      print arr[0]
+      exit
+    }
+  }
+  block = ""
+}
+{
+  block = block $0 "\n"
+}
+END {
+  if (block ~ "HostName[[:space:]]+" ip) {
+    if (block ~ "IdentityFile[[:space:]]+/") {
+      match(block, /IdentityFile[[:space:]]+[^[:space:]]+/, arr)
+      print arr[0]
+    }
+  }
+}
+' "$config_file"
