@@ -214,9 +214,9 @@ echo -e "Private Key: ${GREEN}$idfile${CLEAR} (change with -s)"
 echo -e "local file: ${GREEN}$localfile${CLEAR} (change with -l)"
 
 if [[ $overwrite == 1 ]]; then
-    echo -e "Write mode:${RED}Overwrite${CLEAR}" 
+    echo -e "Write mode: ${RED}Overwrite${CLEAR}" 
 else
-    echo -e "Write mode:${GREEN}Append${CLEAR}" 
+    echo -e "Write mode: ${GREEN}Append${CLEAR}" 
 fi 
 if [ $remotefile != 0 ]; then
     echo -e "remote file: ${GREEN}$remotefile${CLEAR}"
