@@ -24,7 +24,6 @@ inventory=0
 username=0
 password=0
 idfile=0
-jumphost=0
 localfile=0
 remotefile=0
 cmd=0
@@ -72,10 +71,12 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}   -i inventory_file      ${GREEN}Path to the file containing a list of server hostnames or IP addresses.
  ${RED}                          ${GREEN}This option is required.
  ${RED} 
- ${RED}   -j jumphost            ${GREEN}Server host you can pivot from in ssh.
- ${RED}                          ${GREEN}Use the ssh config to define the connection parameters for any jumphost
- ${RED}                          ${GREEN}This option supports a username (root@jumphost)
- ${RED} 
+ ${RED}   -o options             ${GREEN}define custom ssh options
+ ${RED}                          ${GREEN}just like in normal ssh you can pass -o options.
+ ${RED}                          ${GREEN}by default stricthostchecking is disabled and connection timeouts are set to 8 seconds
+ ${RED}                          ${GREEN}this is not limited to -o you can pass ANY ssh options to this flag
+ ${RED}                          ${GREEN}If you use this option stricthostchecking and the connectiontimout options are removed, you will need to add them again
+ ${RED}
  ${RED}   -p                     ${GREEN}Prompts for a password for password authentication. (THIS REQUIRES SSHPASS)
  ${RED}                          ${GREEN}If not provided, you will have to enter the password for each server that needs it.
  ${RED}                          ${GREEN}Not using this is useful when you have different passwords on different servers
@@ -99,8 +100,8 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
   Examples:
    ${RED}$0 ${GREEN}-m run -i oldservers.txt -c 'apt update && apt upgrade -y && apt autoremove -y'                    ${CLEAR}# Update a list of servers
    ${RED}$0 ${GREEN}-m ping -i serversthatshouldbelocked.txt -u root -p | tee sshaudit.txt                             ${CLEAR}# Check what servers are not secured
-   ${RED}$0 ${GREEN}-m ping -i serversthatshouldbelocked.txt -j centralpivot.domain -u root -p | tee sshaudit.txt      ${CLEAR}# Check if you can pivot from other locations
    ${RED}$0 ${GREEN}-m ins -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
+   ${RED}$0 ${GREEN}-m ping -i servers.txt -u root -o '-J root@jumphost.ip' -u root                                    ${CLEAR}# Add a jumphost for pivoting from
    ${RED}$0 ${GREEN}-m ins -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
    ${RED}$0 ${GREEN}-m man -i bootstrapthese.txt -u root -p                                                            ${CLEAR}# Manually perform common tasks back to back
    ${RED}$0 ${GREEN}-m ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
@@ -120,11 +121,11 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))" | less
 }
 
 # Parse options
-while getopts ":m:i:j:u:s:pl:r:c:" opt; do
+while getopts ":m:i:o:u:s:pl:r:c:" opt; do
   case $opt in
     m) mode="$OPTARG";;
     i) inventory="$OPTARG";;
-    j) jumphost="$OPTARG";;
+    o) options="$OPTARG";;
     p) password="1";;
     l) localfile="$OPTARG";;
     r) remotefile="$OPTARG";;
@@ -203,10 +204,11 @@ if [ $mode == "ins" ]; then
         esac
 fi
 
-if [ $jumphost == 0 ]; then
-    jumphostcmd=""
+# Additional options
+if [ "$options" == 0 ]; then
+    optionscmd="-o StrictHostKeyChecking=no -o ConnectTimeout=8"
 else
-    jumphostcmd="-J ${jumphost}"
+    optionscmd="${options}"
 fi
 
 # If using sshpass ==========================================================
@@ -218,8 +220,8 @@ else
 fi
 
 # Build confirmation dialog and working ssh command ==============================================
-sshcmdredacted="${passwordcmdredacted}ssh ${idfilecmd}-o StrictHostKeyChecking=no -o ConnectTimeout=8 ${jumphostcmd}"
-sshcmd="${passwordcmd}ssh ${idfilecmd}-o StrictHostKeyChecking=no -o ConnectTimeout=8 ${jumphostcmd}"
+sshcmdredacted="${passwordcmdredacted}ssh ${idfilecmd} ${optionscmd}"
+sshcmd="${passwordcmd}ssh ${idfilecmd} ${optionscmd}"
 
 ## Confirm run ==================================
 echo ""
@@ -230,7 +232,8 @@ if [[ $overwrite == 1 ]]; then
     echo -e "Write mode: ${RED}Overwrite${CLEAR}" 
 else
     echo -e "Write mode: ${GREEN}Append${CLEAR}" 
-fi 
+fi
+
 if [ $remotefile != 0 ]; then
     echo -e "remote file: ${GREEN}$remotefile${CLEAR}"
 fi
@@ -340,9 +343,6 @@ ping() {
                 echo -e "${GREEN}Public key authentication${CLEAR}" 
             else
                 echo -e "${YELLOW}Password Authentication${CLEAR}"
-            fi
-            if [ ! $jumphost == 0 ]; then
-                echo -e "${GREEN}Jumphost: ${jumphost}${CLEAR}" 
             fi
             echo "=============================================================="
         else
@@ -471,7 +471,6 @@ debug() {
         echo -e "${GREEN}debug mode - ${server}${CLEAR}"
         echo "--------------------------------------------------------------"
         echo -e "Inventory:   ${GREEN}  $1  ${CLEAR}"
-        echo -e "Jumphost:    ${GREEN}  $jumphost  ${CLEAR}"
         echo -e "Username:    ${GREEN}  $5  ${CLEAR}"
         echo -e "Idfile:      ${GREEN}  $4  ${CLEAR}"
         echo -e "Password:    ${GREEN}  $2  ${CLEAR}"
