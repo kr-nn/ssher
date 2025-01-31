@@ -21,6 +21,7 @@ CLEAR='\033[0m'
 # options
 mode=0
 inventory=0
+options=0
 username=0
 password=0
 idfile=0
@@ -150,7 +151,7 @@ fi
 
 # Default local file ==========================================================
 if [ "$localfile" == 0 ]; then
-    localfile="$HOME/.ssh/id_rsa.pub"
+    localfile="$HOME/.ssh/id_ed25519.pub"
 fi
 
 # Default remote file ==========================================================
@@ -333,7 +334,7 @@ script() {
 ping() {
     for server in `cat $1`; do
 
-        ssh_output=$($sshcmd $5@${server} -v exit 2>&1)
+        ssh_output=$($sshcmd $5@${server} -v exit 0 2>&1)
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
