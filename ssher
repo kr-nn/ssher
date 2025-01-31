@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # What is this?
 # This is a general tool for SSH and auditability. No need to learn complex software like ansible
