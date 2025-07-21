@@ -53,7 +53,7 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${GREEN}███████║███████║██║  ██║███████╗██║  ██║
  ${GREEN}╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝${CLEAR}
 $(printf '=%.0s' $(seq 1 $(tput cols)))
-  Usage:${RED} $0 ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command']
+  Usage:${RED} ssher ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command']
   
   Options:
  ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'ins', 'download', 'upload', or 'man'.
@@ -99,24 +99,25 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}                          ${GREEN}Wrap with \"\" when there's spaces (most of the time)
  ${RED} 
   Examples:
-   ${RED}$0 ${GREEN}-m run -i oldservers.txt -c 'apt update && apt upgrade -y && apt autoremove -y'                    ${CLEAR}# Update a list of servers
-   ${RED}$0 ${GREEN}-m ping -i serversthatshouldbelocked.txt -u root -p | tee sshaudit.txt                             ${CLEAR}# Check what servers are not secured
-   ${RED}$0 ${GREEN}-m ins -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
-   ${RED}$0 ${GREEN}-m ping -i servers.txt -u root -o '-J root@jumphost.ip' -u root                                    ${CLEAR}# Add a jumphost for pivoting from
-   ${RED}$0 ${GREEN}-m ins -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
-   ${RED}$0 ${GREEN}-m man -i bootstrapthese.txt -u root -p                                                            ${CLEAR}# Manually perform common tasks back to back
-   ${RED}$0 ${GREEN}-m ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
-   ${RED}$0 ${GREEN}-m script -i servers.txt -u root -l ~/.local/bin/profileconfig.sh                                  ${CLEAR}# configure your shell profile on all servers
-   ${RED}$0 ${GREEN}-m download -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
-   ${RED}$0 ${GREEN}-m upload -i servers.txt -u root -l ~/.confs/static_ips -r /etc/networking/interfaces              ${CLEAR}# after downloading interfaces files you and update them, then upload them
-   ${RED}$0 ${GREEN}-m run -i servers.txt -u root -c 'reboot'                                                          ${CLEAR}# reboot all servers
-   ${RED}$0 ${GREEN}-m run -i servers.txt -u root -c 'systemctl --failed'                                              ${CLEAR}# list all failed services in your network
+   ${RED}ssher ${GREEN}-m run -i oldservers.txt -c 'apt update && apt upgrade -y && apt autoremove -y'                    ${CLEAR}# Update a list of servers
+   ${RED}ssher ${GREEN}-m ping -i serversthatshouldbelocked.txt -u root -p | tee sshaudit.txt                             ${CLEAR}# Check what servers are not secured
+   ${RED}ssher ${GREEN}-m ins -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
+   ${RED}ssher ${GREEN}-m ping -i servers.txt -u root -o '-J root@jumphost.ip' -u root                                    ${CLEAR}# Add a jumphost for pivoting from
+   ${RED}ssher ${GREEN}-m ins -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
+   ${RED}ssher ${GREEN}-m man -i bootstrapthese.txt -u root -p                                                            ${CLEAR}# Manually perform common tasks back to back
+   ${RED}ssher ${GREEN}-m ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
+   ${RED}ssher ${GREEN}-m script -i servers.txt -u root -l ~/.local/bin/profileconfig.sh                                  ${CLEAR}# configure your shell profile on all servers
+   ${RED}ssher ${GREEN}-m download -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
+   ${RED}ssher ${GREEN}-m upload -i servers.txt -u root -l ~/.confs/static_ips -r /etc/networking/interfaces              ${CLEAR}# after downloading interfaces files you and update them, then upload them
+   ${RED}ssher ${GREEN}-m run -i servers.txt -u root -c 'reboot'                                                          ${CLEAR}# reboot all servers
+   ${RED}ssher ${GREEN}-m run -i servers.txt -u root -c 'systemctl --failed'                                              ${CLEAR}# list all failed services in your network
 
   PROTIPS:
   ${RED}building inventories is easy with nmap:${GREEN} nmap -n -Pn -p 22 192.168.4.0/24 -oG - | grep "open" | awk '{ print $2 }'
 
-  ${RED}Create a Report that you can read:${CLEAR} ${GREEN}$0 -m ping -i ips.list |tee date.report${CLEAR} # This outputs the color mask for bash, make sure to cat the file to get the color output appropriately
-                                                                  ${GREEN}cat date.report${CLEAR} # vim does not render ANSI escape codes without help use cat, more, less as much as you can
+  ${RED}Create a Report that you can read:${CLEAR}
+  ${GREEN}ssher -m ping -i ips.list |tee date.report${CLEAR} # This outputs the color mask for bash, make sure to cat the file to get the color output appropriately
+                             ${GREEN}cat date.report${CLEAR} # vim does not render ANSI escape codes without help use cat, more, less as much as you can
 
 $(printf '=%.0s' $(seq 1 $(tput cols)))" | less
 }
