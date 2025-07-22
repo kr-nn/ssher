@@ -154,7 +154,7 @@ done
 [[ $write == "o" || $write == "O" ]] && { overwrite=1; } || { overwrite=0; }
 
 # shellcheck disable=SC2015
-[[ "$options" == 0 ]] && { optionscmd="-o StrictHostKeyChecking=no -o ConnectTimeout=8"; } || { optionscmd="${options}"; }
+[[ "$options" == 0 ]] && { optionscmd="-o StrictHostKeyChecking=no -o ConnectTimeout=3 BatchMode=yes"; } || { optionscmd="${options}"; }
 
 # shellcheck disable=SC2015
 [[ $password == 0 ]] && { passwordcmd=""; } || { passwordcmd="sshpass -p ${password} "; passwordcmdredacted="sshpass -p REDACTED "; }
