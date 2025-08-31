@@ -1,0 +1,5 @@
+- [ ] complete working v2
+- [ ] implement parallelism
+- [ ] make batch toggle
+- [ ] make output toggle (json output)
+- [ ] rich inventory
