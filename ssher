@@ -1,48 +1,18 @@
 #!/usr/bin/env bash
-#
-# What is this?
-# This is a general tool for SSH and auditability. No need to learn complex software like ansible
-# This is a simpler quicker to RnD ansible
-# This is a simpler tool that uses only 1 dependancy and it's optional: sshpass
-# Otherwise all you need is a posix compliant shell and ssh
-#
-# What is it not?
-# This is NOT a state management or configuration management engine.
-# This does NOT replace SALT/puppet/Chef
-# This will not expand past a few simple but robust capabilities
 
-## Initialize variables
-# formatting
+###############################################################
+### Initial Variables #########################################
+###############################################################
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
-CLEAR='\033[0m' 
+CLEAR='\033[0m'
 
-# options
-mode=0
-inventory=0
-options=0
-username=0
-password=0
-idfile=0
-localfile=0
-remotefile=0
-cmd=0
+###############################################################
+### Help Dialog ###############################################
+###############################################################
 
-passconfirm=0
-
-# Check if sshpass can be used
-if which sshpass &> /dev/null; then
-    sshpass=1
-else
-    echo -e "${RED}"
-    echo "WARNING: sshpass not installed or not in path."
-    echo "You will need to install it if you don't want to enter passwords manually"
-    echo -ne "${CLEAR}"
-    sshpass=0
-fi
-
-# Help Dialog
 show_help() {
   echo -e "
 $(printf '=%.0s' $(seq 1 $(tput cols)))
@@ -121,130 +91,129 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
 $(printf '=%.0s' $(seq 1 $(tput cols)))" | less
 }
 
-# Parse options
-while getopts ":m:i:o:u:s:pl:r:c:" opt; do
-  case $opt in
-    m) mode="$OPTARG";;
-    i) inventory="$OPTARG";;
-    o) options="$OPTARG";;
-    p) password="1";;
-    l) localfile="$OPTARG";;
-    r) remotefile="$OPTARG";;
-    s) idfile="$OPTARG";;
-    u) username="$OPTARG";;
-    c) cmd="$OPTARG";;
-    *) show_help; exit 1;;
+###############################################################
+### Argument parser ###########################################
+###############################################################
+# Detect option collisions # TEST
+declare -A SET SRC
+set_opt() {
+  local key=$1 val=$2 src=$3
+  if [[ -v SET[$key] ]]; then
+    echo "error: '$key' specified twice (first ${SRC[$key]}, then $src)"
+    exit 1
+  fi
+  SET[$key]=$val
+  SRC[$key]=$src
+  printf -v "$key" '%s' "$val"
+}
+
+OPTS=$(getopt -o m:i:o:u:s:pl:r:c: -l inventory:,options:,user:,idfile:,password,localfile:,remotefile:,cmd: -- "$@") || exit 2
+eval set -- "$OPTS"
+while true; do
+  case "$1" in
+    -i|--inventory)          set_opt inventory   "$2" "$1";  shift 2;;
+    -o|--options)            set_opt options     "$2" "$1";  shift 2;;
+    -u|--user|--username)    set_opt username    "$2" "$1";  shift 2;;
+    -s|--idfile)             set_opt idfile      "$2" "$1";  shift 2;;
+    -l|--localfile)          set_opt localfile   "$2" "$1";  shift 2;;
+    -r|--remotefile)         set_opt remotefile  "$2" "$1";  shift 2;;
+    -c|--cmd)                set_opt cmd         "$2" "$1";  shift 2;;
+    -p|--password)           set_opt password    "1"  "$1";  shift 1;;
+    --) shift; break;;
   esac
 done
 
-# Fail if there is no mode or inventory ==========================================================
-if [ "$mode" == 0 ] || [ "$inventory" == 0 ]; then
-    show_help
-    exit 1
+# Set mode
+mode="${1:-}"; shift
+
+case "$mode" in
+    test|ping|run|script|insert|download|upload|man) ;;
+    ""|*) show_help; exit 1; ;;
+esac
+
+###############################################################
+### Preflight #################################################
+###############################################################
+
+#######################
+### Capabilities ######
+#######################
+[ -z $(command -v sshpass) ] || { sshpass=1; }
+
+#######################
+### Defaults ##########
+#######################
+[ -z "$username" ] && username=$USER
+[ ! -z "$idfile" ] && idfilecmd=" -i ${idfile}";
+[ -z "$options" ] && { optionscmd=" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
+[ ! -z "$options" ] && { optionscmd=" ${options} -o BatchMode=yes"; } # TODO Create batch mode toggle (this can cause dangerous breakages is why it should be dedicated)
+
+#######################
+### Early failures ####
+#######################
+[ -z "$mode" ] || [ -z "$inventory" ] && { show_help && exit 1; }
+[ ! -f "$inventory" ] && { echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."; exit 1; }
+[ ! -z "$password" ] && [ -z "$sshpass" ] && { echo "FATAL: sshpass is not available and -p was used"; exit 1; }
+if [ ! -z "$idfile" ]; then # We still continue because you can defer to external configuration for auth id
+  [ ! -f "$idfile" ] && { echo "FATAL: Selected private key ${idfile} doesn't seem to exist."; exit 1; }
 fi
+case $mode in "test"|"script"|"insert"|"download"|"upload")
+    [ -z "$localfile" ] && { echo "FATAL: Local file required when in $mode mode"; exit 1; } ;;
+esac
+case $mode in "test"|"insert"|"download"|"upload")
+    [ -z "$remotefile" ] && { echo "FATAL: Remote file required when in $mode mode"; exit 1; } ;;
+esac
+case $mode in "test"|"run")
+    [ -z "$cmd" ] && { echo "FATAL: Command is required in run mode"; exit 1; } ;;
+esac
 
-# Fail if inventory file is not found ==========================================================
-if [ ! -f "$inventory" ]; then
-    echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."
-    exit 1
-fi
+#######################
+### Inputs Required ###
+#######################
+[ -z "$password" ] || { read -s -p "Please enter the password for traditional authentication: " password; echo ""; }
+[ "$mode" == "insert" ] || [ "$mode" == "test" ] && read -r -p "Using insert mode, Append or Override? O/A? " write
+case "$write" in
+  [oO]) overwrite=1 ;;
+  *) ;;
+esac
+echo $password
 
-# Default local file ==========================================================
-if [ "$localfile" == 0 ]; then
-    localfile="$HOME/.ssh/id_ed25519.pub"
-fi
+#######################
+### command builder ###
+#######################
+[ ! -z "$password" ] && { passwordcmd="sshpass -p ${password} "; passwordcmdredacted="sshpass -p REDACTED "; }
 
-# Default remote file ==========================================================
-if [ "$remotefile" == 0 ]; then
-    remotefile="~/.ssh/authorized_keys"
-fi
+sshcmdredacted="${passwordcmdredacted}ssh $username@-------${idfilecmd}${optionscmd}"
+sshcmd="${passwordcmd}ssh ${idfilecmd}${optionscmd}"
 
-# user to ssh as ==========================================================
-if [ "$username" == 0 ]; then
-    username=$USER
-fi
+#######################
+### Confirmation ######
+#######################
 
-# If using custom idfile or using default ==========================================================
-if [ "$idfile" == 0 ]; then
-    idfilecmd=""
-    idfile="$HOME/.ssh/config"
-else
-    idfilecmd="-i ${idfile} "
-fi
-
-# Fail if idfile is not found ==========================================================
-if [ ! -f ${idfile} ] ; then
-    echo "FATAL: Selected private key or configuration file ${idfile} doesn't seem to exist."
-    exit 1
-fi
-
-# Fail to run if using a pass and sshpass is not installed ==========================================================
-if [ $sshpass -eq 0 ] && [ $password == "1" ]; then
-    echo "FATAL: Using -p with sshpass not available."
-    exit 1
-fi
-
-## Password prompt =============================
-
-# Ask for password prompt, if password is asked for
-if [ "$password" == "1" ]; then
-    read -s -p "Input the password: " password
-fi
-
-## Insert mode prompt =============================
-if [ $mode == "ins" ]; then
-    echo ""
-    read -r -p "Append or overwrite? [a/o] " write
-        case "$write" in
-            [oO])
-                overwrite=1
-                ;;
-            *)
-                overwrite=0
-                ;;
-        esac
-fi
-
-# Additional options
-if [ "$options" == 0 ]; then
-    optionscmd="-o StrictHostKeyChecking=no -o ConnectTimeout=8"
-else
-    optionscmd="${options}"
-fi
-
-# If using sshpass ==========================================================
-if [ $password == 0 ]; then
-    passwordcmd=""
-else
-    passwordcmd="sshpass -p ${password} "
-    passwordcmdredacted="sshpass -p REDACTED "
-fi
-
-# Build confirmation dialog and working ssh command ==============================================
-sshcmdredacted="${passwordcmdredacted}ssh ${idfilecmd} ${optionscmd}"
-sshcmd="${passwordcmd}ssh ${idfilecmd} ${optionscmd}"
-
-## Confirm run ==================================
 echo ""
-echo -e "Private Key: ${GREEN}$idfile${CLEAR} (change with -s)"
-echo -e "local file: ${GREEN}$localfile${CLEAR} (change with -l)"
+[[ -v $idfilecmd ]] && echo -e "Private Key: ${GREEN}$idfile${CLEAR}"
 
-if [[ $overwrite == 1 ]]; then
-    echo -e "Write mode: ${RED}Overwrite${CLEAR}" 
-else
-    echo -e "Write mode: ${GREEN}Append${CLEAR}" 
+if [ "$mode" == "insert" ] || [ "$mode" == "test" ]; then
+  if [ "$overwrite" == "1" ]; then
+      echo -e "Write mode: ${RED}Overwrite${CLEAR}"
+  else
+      echo -e "Write mode: ${GREEN}Append${CLEAR}"
+  fi
 fi
 
-if [ $remotefile != 0 ]; then
-    echo -e "remote file: ${GREEN}$remotefile${CLEAR}"
-fi
+case $mode in "test"|"script"|"insert"|"download"|"upload")
+    echo -e "local file: ${GREEN}$localfile${CLEAR}" ;;
+esac
+case $mode in "test"|"insert"|"download"|"upload")
+    echo -e "remote file: ${GREEN}$remotefile${CLEAR}" ;;
+esac
 
-echo -e "Username: ${GREEN}$username${CLEAR} (change with -u)"
+echo -e "Username: ${GREEN}$username${CLEAR}"
 echo -e "Servers to attempt (cat the file if you're unsure): ${GREEN}$inventory${CLEAR}"
 
-if [ "$cmd" != 0 ]; then
-    echo -e "Command: ${GREEN}$cmd${CLEAR}"
-fi
+case $mode in "test"|"run")
+    echo -e "Command: ${GREEN}$cmd${CLEAR}" ;;
+esac
 
 echo -e "SSH: ${GREEN}${sshcmdredacted}${CLEAR}"
 
@@ -255,34 +224,43 @@ while [ $countdowntime -gt 0 ]; do
     countdowntime=$((countdowntime-1))
 done
 
-read -r -p "Are you sure you want to run this? [y/n] " confirm
-case "$confirm" in
-    [yY][eE][sS]|[yY]) 
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-echo ""
-echo "=============================================================="
+if [ ! "$mode" == "test" ]; then
+  read -r -p "Are you sure you want to run this? [y/n] " confirm
+  case "$confirm" in
+      [yY][eE][sS]|[yY])
+          ;;
+      *)
+          exit 1
+          ;;
+  esac
+  echo ""
+  echo "=============================================================="
+else
+  exit 0
+fi
 
-## Modes ======================================== 
+###############################################################
+### helper functions ##########################################
+###############################################################
+
+
+###############################################################
+### Modes #####################################################
+###############################################################
+
+#######################
+### Run ###############
+#######################
 run() {
-    # Fail if no command
-    if [ "$6" == 0 ]; then
-        echo "FATAL: you need -c to run a command on the servers"
-        exit 0
-    fi
+    #"run") run "$inventory" "$password" "$username" "$cmd" "$debug";;
+    inventory=$1
+    password=$2
+    username=$3
+    cmd=$4
 
-    # Fail if no command
-    if [ "$6" == '' ]; then
-        echo "FATAL: empty commands make your shell broken"
-        exit 0
-    fi
+    for server in $(cat $inventory); do
 
-    for server in `cat $1`; do
-
-        ssh_output=$($sshcmd $5@${server} "${6}" 2>&1)
+        ssh_output=$($sshcmd $username@${server} "${cmd}" 2>&1)
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
@@ -299,6 +277,9 @@ run() {
     done
 }
 
+#######################
+### script ############
+#######################
 script() {
     # fail if option is missing
     if [ "$3" == 0 ]; then
@@ -331,10 +312,17 @@ script() {
     done
 }
 
+#######################
+### ping ##############
+#######################
 ping() {
+
+    inventory=$1
+    password=$2
+    username=$3
     for server in `cat $1`; do
 
-        ssh_output=$($sshcmd $5@${server} -v exit 0 2>&1)
+        ssh_output=$($sshcmd $username@${server} -v exit 0 2>&1)
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
@@ -355,6 +343,9 @@ ping() {
     done
 }
 
+#######################
+### insert ############
+#######################
 ins() {
     # Fail if requirements are missing
     if [ "$3" == 0 ]; then
@@ -393,6 +384,9 @@ ins() {
     done
 }
 
+#######################
+### download ##########
+#######################
 download() {
 
     if [ "$3" == 0 ]; then
@@ -427,6 +421,9 @@ download() {
     done
 }
 
+#######################
+### upload ############
+#######################
 upload() {
 
     if [ "$3" == 0 ]; then
@@ -460,12 +457,18 @@ upload() {
     done
 }
 
+#######################
+### manual ############
+#######################
 man() {
     for server in `cat $1`; do
         $sshcmd $5@${server}
     done
 }
 
+#######################
+### debug #############
+#######################
 debug() {
     for server in `cat $1`; do
         echo "=============================================================="
@@ -483,14 +486,14 @@ debug() {
 
 # Main logic based on mode
 case $mode in
-  "run") run $inventory $password $localfile $idfile $username "$cmd" $debug;;
-  "script") script $inventory $password $localfile $idfile $username "$cmd" $debug;;
-  "ping") ping $inventory $password $localfile $idfile $username $cmd $debug;;
-  "ins") ins $inventory $password $localfile $idfile $username $cmd $remotefile;;
-  "download") download $inventory $password $localfile $idfile $username $cmd $remotefile;;
-  "upload") upload $inventory $password $localfile $idfile $username $cmd $remotefile;;
-  "man") man $inventory $password $localfile $idfile $username $cmd $debug;;
-  "debug") debug $inventory $password $localfile $idfile $username $cmd $debug;;
+  "run") run "$inventory" "$password" "$username" "$cmd";;
+  "script") script "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
+  "ping") ping "$inventory" "$password" "$username";;
+  "ins") ins "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
+  "download") download "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
+  "upload") upload "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
+  "man") man "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
+  "debug") debug "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
   *) show_help; exit 1;;
 esac
 
