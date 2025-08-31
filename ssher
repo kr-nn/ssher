@@ -94,6 +94,9 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))" | less
 ###############################################################
 ### Argument parser ###########################################
 ###############################################################
+# Capture original output for debugging
+origcommand="$0 $@"
+
 # Detect option collisions # TEST
 declare -A SET SRC
 set_opt() {
@@ -107,7 +110,9 @@ set_opt() {
   printf -v "$key" '%s' "$val"
 }
 
-OPTS=$(getopt -o m:i:o:u:s:pl:r:c: -l inventory:,options:,user:,idfile:,password,localfile:,remotefile:,cmd: -- "$@") || exit 2
+
+# Parse
+OPTS=$(getopt -o m:i:o:u:s:a:pl:r:c:d -l debug:,dryrun:,inventory:,options:,user:,username:,append:,idfile:,password,localfile:,remotefile:,cmd:,command: -- "$@") || exit 2
 eval set -- "$OPTS"
 while true; do
   case "$1" in
@@ -117,18 +122,22 @@ while true; do
     -s|--idfile)             set_opt idfile      "$2" "$1";  shift 2;;
     -l|--localfile)          set_opt localfile   "$2" "$1";  shift 2;;
     -r|--remotefile)         set_opt remotefile  "$2" "$1";  shift 2;;
-    -c|--cmd)                set_opt cmd         "$2" "$1";  shift 2;;
+    -a|--append)             set_opt append      "$2" "$1";  shift 2;;
+    -c|--cmd|--command)      set_opt cmd         "$2" "$1";  shift 2;;
     -p|--password)           set_opt password    "1"  "$1";  shift 1;;
+    -d|--dryrun|--debug)     set_opt debug       "1"  "$1";  shift 1;;
     --) shift; break;;
   esac
 done
+
+[ ! -z $debug ] && echo "Original Command: $origcommand";
 
 # Set mode
 mode="${1:-}"; shift
 
 case "$mode" in
-    test|ping|run|script|insert|download|upload|man) ;;
-    ""|*) show_help; exit 1; ;;
+    test|ping|run|script|insert|download|upload|man|manual) ;;
+    ""|*) echo "FATAL: $mode is not a valid mode"; exit 1; ;;
 esac
 
 ###############################################################
@@ -156,6 +165,13 @@ esac
 [ ! -z "$password" ] && [ -z "$sshpass" ] && { echo "FATAL: sshpass is not available and -p was used"; exit 1; }
 if [ ! -z "$idfile" ]; then # We still continue because you can defer to external configuration for auth id
   [ ! -f "$idfile" ] && { echo "FATAL: Selected private key ${idfile} doesn't seem to exist."; exit 1; }
+  [ $(ssh-keygen -yf $idfile > /dev/null) ] && { echo "FATAL: Selected private key ${idfile} is malformed, ensure this is a real key"; exit 1; }
+fi
+if [ ! -z "$append" ]; then
+  case $append in
+      "o"|"O"|"overwrite"|"a"|"A"|"append") ;;
+      ""|*) echo "FATAL: --append offered with no valid argument"; exit 1;
+  esac
 fi
 case $mode in "test"|"script"|"insert"|"download"|"upload")
     [ -z "$localfile" ] && { echo "FATAL: Local file required when in $mode mode"; exit 1; } ;;
@@ -171,12 +187,11 @@ esac
 ### Inputs Required ###
 #######################
 [ -z "$password" ] || { read -s -p "Please enter the password for traditional authentication: " password; echo ""; }
-[ "$mode" == "insert" ] || [ "$mode" == "test" ] && read -r -p "Using insert mode, Append or Override? O/A? " write
-case "$write" in
-  [oO]) overwrite=1 ;;
+[ "$mode" == "insert" ] || [ "$mode" == "test" ] && [ -z "$append" ] && read -n 1 -r -p "Using insert mode, Append or Override? O/A? " append
+case "$append" in
+    "o"|"O"|"overwrite") overwrite=1 ;;
   *) ;;
 esac
-echo $password
 
 #######################
 ### command builder ###
@@ -217,15 +232,15 @@ esac
 
 echo -e "SSH: ${GREEN}${sshcmdredacted}${CLEAR}"
 
-countdowntime=3
-while [ $countdowntime -gt 0 ]; do
-    echo -ne "${RED}Make sure to read this! $countdowntime\033[0K\r${CLEAR}"
-    sleep 1
-    countdowntime=$((countdowntime-1))
-done
-
 if [ ! "$mode" == "test" ]; then
-  read -r -p "Are you sure you want to run this? [y/n] " confirm
+  countdowntime=3
+  while [ $countdowntime -gt 0 ]; do
+      echo -ne "${RED}Make sure to read this! $countdowntime\033[0K\r${CLEAR}"
+      sleep 1
+      countdowntime=$((countdowntime-1))
+  done
+
+  read -n 1 -r -p "Are you sure you want to run this? [y/n] " confirm
   case "$confirm" in
       [yY][eE][sS]|[yY])
           ;;
@@ -236,6 +251,16 @@ if [ ! "$mode" == "test" ]; then
   echo ""
   echo "=============================================================="
 else
+  case $mode in
+    "run") echo "run was triggered" ;;
+    "script") echo "script was triggered" ;;
+    "ping") echo "ping was triggered" ;;
+    "ins") echo "insert was triggered" ;;
+    "download") echo "download was triggered" ;;
+    "upload") echo "upload was triggered" ;;
+    "man"|"manual") echo "manual was triggered" ;;
+    "test") echo "We are testing" ;;
+  esac
   exit 0
 fi
 
@@ -485,6 +510,7 @@ debug() {
 }
 
 # Main logic based on mode
+[ ! -z $debug ] && { echo "Debug mode"; exit 0; }
 case $mode in
   "run") run "$inventory" "$password" "$username" "$cmd";;
   "script") script "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
@@ -492,8 +518,6 @@ case $mode in
   "ins") ins "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
   "download") download "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
   "upload") upload "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
-  "man") man "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
-  "debug") debug "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
-  *) show_help; exit 1;;
+  "man"|"manual") man "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
 esac
 
