@@ -165,7 +165,7 @@ esac
 [ ! -z "$password" ] && [ -z "$sshpass" ] && { echo "FATAL: sshpass is not available and -p was used"; exit 1; }
 if [ ! -z "$idfile" ]; then # We still continue because you can defer to external configuration for auth id
   [ ! -f "$idfile" ] && { echo "FATAL: Selected private key ${idfile} doesn't seem to exist."; exit 1; }
-  [ $(ssh-keygen -yf $idfile > /dev/null) ] && { echo "FATAL: Selected private key ${idfile} is malformed, ensure this is a real key"; exit 1; }
+  ssh-keygen -yf $idfile &>/dev/null || { echo "FATAL: Selected private key ${idfile} is malformed, ensure this is a real key"; exit 1; }
 fi
 if [ ! -z "$append" ]; then
   case $append in
@@ -206,7 +206,7 @@ sshcmd="${passwordcmd}ssh ${idfilecmd}${optionscmd}"
 #######################
 
 echo ""
-[[ -v $idfilecmd ]] && echo -e "Private Key: ${GREEN}$idfile${CLEAR}"
+[ ! -z "$idfilecmd" ] && echo -e "Private Key: ${GREEN}$idfile${CLEAR}"
 
 if [ "$mode" == "insert" ] || [ "$mode" == "test" ]; then
   if [ "$overwrite" == "1" ]; then
@@ -255,7 +255,7 @@ else
     "run") echo "run was triggered" ;;
     "script") echo "script was triggered" ;;
     "ping") echo "ping was triggered" ;;
-    "ins") echo "insert was triggered" ;;
+    "insert") echo "insert was triggered" ;;
     "download") echo "download was triggered" ;;
     "upload") echo "upload was triggered" ;;
     "man"|"manual") echo "manual was triggered" ;;
@@ -277,11 +277,7 @@ fi
 ### Run ###############
 #######################
 run() {
-    #"run") run "$inventory" "$password" "$username" "$cmd" "$debug";;
-    inventory=$1
-    password=$2
-    username=$3
-    cmd=$4
+    inventory=$1 username=$2 cmd=$3
 
     for server in $(cat $inventory); do
 
@@ -289,12 +285,12 @@ run() {
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
         else
-            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo -e "${RED}FAILED ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -306,30 +302,20 @@ run() {
 ### script ############
 #######################
 script() {
-    # fail if option is missing
-    if [ "$3" == 0 ]; then
-        echo "FATAL: you need -l to choose a script file locally"
-        exit 0
-    fi
 
-    # Fail if local file is not found
-    if [ ! -f $3 ]; then
-        echo "FATAL: Selected local file (${3}) doesn't seem to exist. Check your pwd."
-        exit 1
-    fi
+    inventory=$1 username=$2 script=$3
+    for server in $(cat $inventory); do
 
-    for server in `cat $1`; do
-
-        ssh_output=$($sshcmd $5@${server} 'bash -s' < ${3} 2>&1)
+        ssh_output=$($sshcmd $username@${server} 'bash -s' < ${script} 2>&1)
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
         else
-            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo -e "${RED}FAILED ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -342,25 +328,23 @@ script() {
 #######################
 ping() {
 
-    inventory=$1
-    password=$2
-    username=$3
-    for server in `cat $1`; do
+    inventory=$1 username=$2
+    for server in $(cat $inventory); do
 
         ssh_output=$($sshcmd $username@${server} -v exit 0 2>&1)
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             if echo "$ssh_output" | grep -q "Server accepts key:"; then
-                echo -e "${GREEN}Public key authentication${CLEAR}" 
+                echo -e "${GREEN}Public key authentication${CLEAR}"
             else
                 echo -e "${YELLOW}Password Authentication${CLEAR}"
             fi
             echo "=============================================================="
         else
-            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo -e "${RED}FAILED ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -372,36 +356,24 @@ ping() {
 ### insert ############
 #######################
 ins() {
-    # Fail if requirements are missing
-    if [ "$3" == 0 ]; then
-        echo "FATAL: you need -l to have content to push"
-        exit 0
-    fi
 
-    if [ "$7" == 0 ]; then
-        echo "FATAL: you need -r to push the content to"
-        exit 0
-    fi
-
-    # Fail if local file is not found
-    if [ ! -f $3 ]; then
-        echo "FATAL: Selected local file (${3}) doesn't seem to exist. Check your pwd."
-        exit 1
-    fi
-
-    for server in `cat $1`; do
-
-        ssh_output=$(cat $3 |$sshcmd $5@${server} "cat >> ${7}" 2>&1)
+    inventory=$1 username=$2 contents=$3 remotefile=$4
+    for server in $(cat $inventory); do
+        if [ ! -z "$overwrite" ]; then
+          ssh_output=$(cat $contents |$sshcmd $username@${server} "cat > ${remotefile}" 2>&1)
+        else
+          ssh_output=$(cat $contents |$sshcmd $username@${server} "cat >> ${remotefile}" 2>&1)
+        fi
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
-            echo "Wrote: $3"
-            echo "To: $7"
+            echo "Wrote: $contents"
+            echo "To: $remotefile"
             echo "=============================================================="
         else
-            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo -e "${RED}FAILED ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -414,31 +386,21 @@ ins() {
 #######################
 download() {
 
-    if [ "$3" == 0 ]; then
-        echo "FATAL: you need -l to put the content somewhere"
-        exit 0
-    fi
-
-    if [ "$7" == 0 ]; then
-        echo "FATAL: you need -r to pull the content"
-        exit 0
-    fi
-
-    for server in `cat $1`; do
-
-        echo "" >> $3
-        echo "##\$\$##| ${server} |##\$\$##" >> $3
-        ssh_output=$($sshcmd $5@${server} "cat ${7}" >> ${3} 2>&1)
+    inventory=$1 username=$2 bundle=$3 remotefile=$4
+    for server in $(cat $inventory); do
+        echo "" >> $bundle
+        echo "##\$\$##| ${server} |##\$\$##" >> $bundle
+        ssh_output=$($sshcmd $username@${server} "cat ${remotefile}" >> ${bundle} 2>&1)
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
-            echo "Wrote: $7"
-            echo "To: $3"
+            echo "Wrote: $remotefile"
+            echo "To: $bundle"
             echo "=============================================================="
         else
-            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo -e "${RED}FAILED ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -451,30 +413,21 @@ download() {
 #######################
 upload() {
 
-    if [ "$3" == 0 ]; then
-        echo "FATAL: you need -l to push the content somewhere"
-        exit 0
-    fi
-    if [ "$7" == 0 ]; then
-        echo "FATAL: you need -r to put the content somewhere"
-        exit 0
-    fi
+    inventory=$1 username=$2 bundle=$3 remotefile=$4
+    for server in $(cat $inventory); do
 
-    for server in `cat $1`; do
-
-        content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" $3 | sed '/^$/d')
-        echo "# ============================ ${server} ==================================="
-        ssh_output=$($sshcmd $5@${server} "echo $content > ${7}" 2>&1)
+        content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" $bundle | sed '/^$/d')
+        ssh_output=$($sshcmd $username@${server} "echo $content > ${remotefile}" 2>&1)
         ssh_status=$?
 
         if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}" 
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
-            echo "Wrote: $3"
-            echo "To: $7"
+            echo "Wrote: $bundle"
+            echo "To: $remotefile"
             echo "=============================================================="
         else
-            echo -e "${RED}FAILED ${server}${CLEAR}" 
+            echo -e "${RED}FAILED ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -486,38 +439,21 @@ upload() {
 ### manual ############
 #######################
 man() {
-    for server in `cat $1`; do
-        $sshcmd $5@${server}
-    done
-}
-
-#######################
-### debug #############
-#######################
-debug() {
-    for server in `cat $1`; do
-        echo "=============================================================="
-        echo -e "${GREEN}debug mode - ${server}${CLEAR}"
-        echo "--------------------------------------------------------------"
-        echo -e "Inventory:   ${GREEN}  $1  ${CLEAR}"
-        echo -e "Username:    ${GREEN}  $5  ${CLEAR}"
-        echo -e "Idfile:      ${GREEN}  $4  ${CLEAR}"
-        echo -e "Password:    ${GREEN}  $2  ${CLEAR}"
-        echo -e "local file:  ${GREEN}  $3  ${CLEAR}"
-        echo -e "remote file: ${GREEN}  $7  ${CLEAR}"
-        echo -e "Command:     ${GREEN}  $6  ${CLEAR}"
+    inventory=$1 username=$2
+    for server in $(cat $inventory); do
+        $sshcmd $username@${server}
     done
 }
 
 # Main logic based on mode
 [ ! -z $debug ] && { echo "Debug mode"; exit 0; }
 case $mode in
-  "run") run "$inventory" "$password" "$username" "$cmd";;
-  "script") script "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
-  "ping") ping "$inventory" "$password" "$username";;
-  "ins") ins "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
-  "download") download "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
-  "upload") upload "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile";;
-  "man"|"manual") man "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$debug";;
+  "run") run "$inventory" "$username" "$cmd" ;;
+  "script") script "$inventory" "$username" "$localfile" ;;
+  "ping") ping "$inventory" "$username" ;;
+  "insert") ins "$inventory" "$username" "$localfile" "$remotefile" ;;
+  "download") download "$inventory" "$username" "$localfile" "$remotefile" ;;
+  "upload") upload "$inventory" "$username" "$localfile" "$remotefile" ;;
+  "man"|"manual") man "$inventory" "$username" ;;
 esac
 
