@@ -1,4 +1,11 @@
-- [ ] complete working v2
+- [x] complete working v2
+- [ ] rework main logic
+      - This was written when I really had no clue how to write bash.
+      - I can make better use of globals instead of passed arguments
+      - this would allow me to make better architectural decisions like:
+        - making the mode functions contain only mode specific code
+        - easier parallelism implementation
+        - easier rich format inputs
 - [ ] implement parallelism
 - [ ] make batch toggle
 - [ ] make output toggle (json output)
