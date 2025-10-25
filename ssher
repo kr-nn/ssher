@@ -26,6 +26,10 @@ idfile=0
 localfile=0
 remotefile=0
 cmd=0
+jobs=$(nproc)
+usetui=0
+job_tmpdir=0
+current_runner=0
 
 if which sshpass &> /dev/null; then
     sshpass=1
@@ -48,7 +52,7 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${GREEN}███████║███████║██║  ██║███████╗██║  ██║
  ${GREEN}╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝${CLEAR}
 $(printf '=%.0s' $(seq 1 $(tput cols)))
-  Usage:${RED} ssher ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command']
+  Usage:${RED} ssher ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command'] [-J jobs]
 
   Options:
  ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'ins', 'download', 'upload', or 'man'.
@@ -72,6 +76,8 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}                          ${GREEN}by default stricthostchecking is disabled and connection timeouts are set to 8 seconds
  ${RED}                          ${GREEN}this is not limited to -o you can pass ANY ssh options to this flag
  ${RED}                          ${GREEN}If you use this option stricthostchecking and the connectiontimout options are removed, you will need to add them again
+ ${RED}
+ ${RED}   -J jobs                ${GREEN}parallel jobs. default is cpu count
  ${RED}
  ${RED}   -p                     ${GREEN}Prompts for a password for password authentication. (THIS REQUIRES SSHPASS)
  ${RED}                          ${GREEN}If not provided, you will have to enter the password for each server that needs it.
@@ -119,7 +125,7 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))" | less
 }
 
 #_ Parse & setup options ==============================================================
-while getopts ":m:i:o:u:s:pl:r:c:" opt; do
+while getopts ":m:i:o:u:s:pl:r:c:J:" opt; do
   case $opt in
     m) mode="$OPTARG";;
     i) inventory="$OPTARG";;
@@ -130,6 +136,7 @@ while getopts ":m:i:o:u:s:pl:r:c:" opt; do
     s) idfile="$OPTARG";;
     u) username="$OPTARG";;
     c) cmd="$OPTARG";;
+    J) jobs="$OPTARG";;
     *) show_help; exit 1;;
   esac
 done
@@ -154,7 +161,7 @@ done
 [[ $write == "o" || $write == "O" ]] && { overwrite=1; } || { overwrite=0; }
 
 # shellcheck disable=SC2015
-[[ "$options" == 0 ]] && { optionscmd="-o StrictHostKeyChecking=no -o ConnectTimeout=3 BatchMode=yes"; } || { optionscmd="${options}"; }
+[[ "$options" == 0 ]] && { optionscmd="-o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes"; } || { optionscmd="${options}"; }
 
 # shellcheck disable=SC2015
 [[ $password == 0 ]] && { passwordcmd=""; } || { passwordcmd="sshpass -p ${password} "; passwordcmdredacted="sshpass -p REDACTED "; }
@@ -195,16 +202,99 @@ esac
 echo ""
 echo "=============================================================="
 
-#_ Run ==============================================================
-run() {
-    [[ "$6" == 0 ]] && { echo "FATAL: you need -c to run a command on the servers"; exit 0; }
-    [[ "$6" == '' ]] && { echo "FATAL: empty commands make your shell broken"; exit 1; }
+draw_tui() {
+    queued=$((total_hosts - success_hosts - failed_hosts))
+    printf '\rQueued: %d / Success: %d / Failed: %d    ' "$queued" "$success_hosts" "$failed_hosts"
+}
 
-    while IFS= read -r server; do
-        ssh_output=$($sshcmd "$5@${server}" "${6}" 2>&1 < /dev/null)
-        ssh_status=$?
+cleanup_jobs() {
+    [[ $usetui -eq 1 ]] && { tput cnorm; usetui=0; }
+    [[ "$job_tmpdir" != 0 && -d "$job_tmpdir" ]] && rm -rf "$job_tmpdir"
+    job_tmpdir=0
+}
 
-        if [ $ssh_status -eq 0 ]; then
+launch_job() {
+    idx="$1"
+    server="${servers[$idx]}"
+    outfile="$job_tmpdir/$idx"
+    (
+        "${current_runner}" "$server" "$outfile"
+    ) &
+    pids[$idx]=$!
+}
+
+process_servers() {
+    current_runner="$1"
+    mapfile -t servers < "$inventory"
+    total_hosts=${#servers[@]}
+    [[ $total_hosts -eq 0 ]] && { cleanup_jobs; trap - EXIT; return; }
+    success_hosts=0
+    failed_hosts=0
+    pids=()
+    job_tmpdir=$(mktemp -d)
+    trap cleanup_jobs EXIT
+    if [ -t 1 ] && [ "$jobs" -gt 1 ]; then
+        usetui=1
+        tput civis
+        draw_tui
+    fi
+    launch_idx=0
+    active=0
+    declare -A pid_index=()
+    while [ $launch_idx -lt $total_hosts ] || [ $active -gt 0 ]; do
+        while [ $launch_idx -lt $total_hosts ] && [ $active -lt "$jobs" ]; do
+            launch_job "$launch_idx"
+            pid=${pids[$launch_idx]}
+            pid_index[$pid]=$launch_idx
+            launch_idx=$((launch_idx+1))
+            active=$((active+1))
+        done
+        for pid in "${!pid_index[@]}"; do
+            wait "$pid"
+            status=$?
+            idx=${pid_index[$pid]}
+            unset pid_index["$pid"]
+            active=$((active-1))
+            if [ $status -eq 0 ]; then
+                success_hosts=$((success_hosts+1))
+            else
+                failed_hosts=$((failed_hosts+1))
+            fi
+            if [ $usetui -eq 1 ]; then
+                draw_tui
+            fi
+            break
+        done
+    done
+    if [ $usetui -eq 1 ]; then
+        printf '\rQueued: 0 / Success: %d / Failed: %d    \n' "$success_hosts" "$failed_hosts"
+        tput cnorm
+        usetui=0
+    fi
+    if [ "$mode" == "download" ]; then
+        for ((idx=0; idx<total_hosts; idx++)); do
+            server="${servers[$idx]}"
+            echo "" >> "$localfile"
+            echo "##\$\$##| ${server} |##\$\$##" >> "$localfile"
+            data_file="$job_tmpdir/${idx}.data"
+            [ -f "$data_file" ] && cat "$data_file" >> "$localfile"
+        done
+    fi
+    for ((idx=0; idx<total_hosts; idx++)); do
+        cat "$job_tmpdir/$idx"
+    done
+    cleanup_jobs
+    trap - EXIT
+}
+
+#_ Jobs ==============================================================
+run_job() {
+    server="$1"
+    outfile="$2"
+    ssh_output=$($sshcmd "$username@${server}" "${cmd}" 2>&1 < /dev/null)
+    status=$?
+    {
+        if [ $status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
@@ -215,29 +305,17 @@ run() {
             echo "$ssh_output"
             echo "=============================================================="
         fi
-    done < "$1"
+    } > "$outfile"
+    return $status
 }
 
-#_ Script ==============================================================
-script() {
-    # fail if option is missing
-    if [ "$3" == 0 ]; then
-        echo "FATAL: you need -l to choose a script file locally"
-        exit 0
-    fi
-
-    # Fail if local file is not found
-    if [ ! -f "$3" ]; then
-        echo "FATAL: Selected local file (${3}) doesn't seem to exist. Check your pwd."
-        exit 1
-    fi
-
-    while IFS= read -r server; do
-
-        ssh_output=$($sshcmd "$5@${server}" 'bash -s' < "${3}" 2>&1 < /dev/null)
-        ssh_status=$?
-
-        if [ $ssh_status -eq 0 ]; then
+script_job() {
+    server="$1"
+    outfile="$2"
+    ssh_output=$($sshcmd "$username@${server}" 'bash -s' < "${localfile}" 2>&1 < /dev/null)
+    status=$?
+    {
+        if [ $status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
@@ -248,17 +326,17 @@ script() {
             echo "$ssh_output"
             echo "=============================================================="
         fi
-    done < "$1"
+    } > "$outfile"
+    return $status
 }
 
-#_ ping ==============================================================
-ping() {
-    while IFS= read -r server; do
-
-        ssh_output=$($sshcmd "$5@${server}" -v exit 0 2>&1 < /dev/null)
-        ssh_status=$?
-
-        if [ $ssh_status -eq 0 ]; then
+ping_job() {
+    server="$1"
+    outfile="$2"
+    ssh_output=$($sshcmd "$username@${server}" -v exit 0 2>&1 < /dev/null)
+    status=$?
+    {
+        if [ $status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
             if echo "$ssh_output" | grep -q "Server accepts key:"; then
@@ -273,151 +351,199 @@ ping() {
             echo "$ssh_output"
             echo "=============================================================="
         fi
-    done < "$1"
+    } > "$outfile"
+    return $status
+}
+
+ins_job() {
+    server="$1"
+    outfile="$2"
+    ssh_output=$($sshcmd "$username@${server}" "cat >> ${remotefile}" < "$localfile" 2>&1 < /dev/null)
+    status=$?
+    {
+        if [ $status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo "--------------------------------------------------------------"
+            echo "Wrote: $localfile"
+            echo "To: $remotefile"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}"
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    } > "$outfile"
+    return $status
+}
+
+download_job() {
+    server="$1"
+    outfile="$2"
+    data_file="${outfile}.data"
+    ssh_output=$($sshcmd "$username@${server}" "cat ${remotefile}" > "$data_file" 2>&1 < /dev/null)
+    status=$?
+    {
+        if [ $status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo "--------------------------------------------------------------"
+            echo "Wrote: $remotefile"
+            echo "To: $localfile"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}"
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    } > "$outfile"
+    return $status
+}
+
+upload_job() {
+    server="$1"
+    outfile="$2"
+    content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" "$localfile" | sed '/^$/d')
+    ssh_output=$($sshcmd "$username@${server}" "echo $content > ${remotefile}" 2>&1 < /dev/null)
+    status=$?
+    {
+        echo "# ============================ ${server} ==================================="
+        if [ $status -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo "--------------------------------------------------------------"
+            echo "Wrote: $localfile"
+            echo "To: $remotefile"
+            echo "=============================================================="
+        else
+            echo -e "${RED}FAILED ${server}${CLEAR}"
+            echo "--------------------------------------------------------------"
+            echo "$ssh_output"
+            echo "=============================================================="
+        fi
+    } > "$outfile"
+    return $status
+}
+
+debug_job() {
+    server="$1"
+    outfile="$2"
+    {
+        echo "=============================================================="
+        echo -e "${GREEN}debug mode - ${server}${CLEAR}"
+        echo "--------------------------------------------------------------"
+        echo -e "Inventory:   ${GREEN}  $inventory  ${CLEAR}"
+        echo -e "Username:    ${GREEN}  $username  ${CLEAR}"
+        echo -e "Idfile:      ${GREEN}  $idfile  ${CLEAR}"
+        echo -e "Password:    ${GREEN}  $password  ${CLEAR}"
+        echo -e "local file:  ${GREEN}  $localfile  ${CLEAR}"
+        echo -e "remote file: ${GREEN}  $remotefile  ${CLEAR}"
+        echo -e "Command:     ${GREEN}  $cmd  ${CLEAR}"
+    } > "$outfile"
+}
+
+#_ Run ==============================================================
+run() {
+    [[ "$cmd" == 0 ]] && { echo "FATAL: you need -c to run a command on the servers"; exit 0; }
+    [[ "$cmd" == '' ]] && { echo "FATAL: empty commands make your shell broken"; exit 1; }
+    process_servers run_job
+}
+
+#_ Script ==============================================================
+script() {
+    # fail if option is missing
+    if [ "$localfile" == 0 ]; then
+        echo "FATAL: you need -l to choose a script file locally"
+        exit 0
+    fi
+
+    # Fail if local file is not found
+    if [ ! -f "$localfile" ]; then
+        echo "FATAL: Selected local file (${localfile}) doesn't seem to exist. Check your pwd."
+        exit 1
+    fi
+
+    process_servers script_job
+}
+
+#_ ping ==============================================================
+ping() {
+    process_servers ping_job
 }
 
 #_ insert ==============================================================
 ins() {
     # Fail if requirements are missing
-    if [ "$3" == 0 ]; then
+    if [ "$localfile" == 0 ]; then
         echo "FATAL: you need -l to have content to push"
         exit 0
     fi
 
-    if [ "$7" == 0 ]; then
+    if [ "$remotefile" == 0 ]; then
         echo "FATAL: you need -r to push the content to"
         exit 0
     fi
 
     # Fail if local file is not found
-    if [ ! -f "$3" ]; then
-        echo "FATAL: Selected local file (${3}) doesn't seem to exist. Check your pwd."
+    if [ ! -f "$localfile" ]; then
+        echo "FATAL: Selected local file (${localfile}) doesn't seem to exist. Check your pwd."
         exit 1
     fi
 
-    while IFS= read -r server; do
-
-        ssh_output=$($sshcmd "$5@${server}" "cat >> ${7}" < "$3" 2>&1 < /dev/null)
-        ssh_status=$?
-
-        if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
-            echo "--------------------------------------------------------------"
-            echo "Wrote: $3"
-            echo "To: $7"
-            echo "=============================================================="
-        else
-            echo -e "${RED}FAILED ${server}${CLEAR}"
-            echo "--------------------------------------------------------------"
-            echo "$ssh_output"
-            echo "=============================================================="
-        fi
-    done < "$1"
+    process_servers ins_job
 }
 
 #_ Download ==============================================================
 download() {
 
-    if [ "$3" == 0 ]; then
+    if [ "$localfile" == 0 ]; then
         echo "FATAL: you need -l to put the content somewhere"
         exit 0
     fi
 
-    if [ "$7" == 0 ]; then
+    if [ "$remotefile" == 0 ]; then
         echo "FATAL: you need -r to pull the content"
         exit 0
     fi
 
-    while IFS= read -r server; do
-
-        echo "" >> "$3"
-        echo "##\$\$##| ${server} |##\$\$##" >> "$3"
-        ssh_output=$($sshcmd "$5@${server}" "cat ${7}" >> "${3}" 2>&1 < /dev/null)
-        ssh_status=$?
-
-        if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
-            echo "--------------------------------------------------------------"
-            echo "Wrote: $7"
-            echo "To: $3"
-            echo "=============================================================="
-        else
-            echo -e "${RED}FAILED ${server}${CLEAR}"
-            echo "--------------------------------------------------------------"
-            echo "$ssh_output"
-            echo "=============================================================="
-        fi
-    done < "$1"
+    process_servers download_job
 }
 
 #_ upload ==============================================================
 upload() {
 
-    if [ "$3" == 0 ]; then
+    if [ "$localfile" == 0 ]; then
         echo "FATAL: you need -l to push the content somewhere"
         exit 0
     fi
-    if [ "$7" == 0 ]; then
+    if [ "$remotefile" == 0 ]; then
         echo "FATAL: you need -r to put the content somewhere"
         exit 0
     fi
 
-    while IFS= read -r server; do
-
-        content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" "$3" | sed '/^$/d')
-        echo "# ============================ ${server} ==================================="
-        ssh_output=$($sshcmd "$5@${server}" "echo $content > ${7}" 2>&1 < /dev/null)
-        ssh_status=$?
-
-        if [ $ssh_status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
-            echo "--------------------------------------------------------------"
-            echo "Wrote: $3"
-            echo "To: $7"
-            echo "=============================================================="
-        else
-            echo -e "${RED}FAILED ${server}${CLEAR}"
-            echo "--------------------------------------------------------------"
-            echo "$ssh_output"
-            echo "=============================================================="
-        fi
-    done < "$1"
+    process_servers upload_job
 }
 
 #_ manual ==============================================================
 man() {
     while IFS= read -r server; do
-        $sshcmd "$5@${server}"
-    done < "$1"
+        $sshcmd "$username@${server}"
+    done < "$inventory"
 }
 
 #_ debug ==============================================================
 debug() {
-    while IFS= read -r server; do
-        echo "=============================================================="
-        echo -e "${GREEN}debug mode - ${server}${CLEAR}"
-        echo "--------------------------------------------------------------"
-        echo -e "Inventory:   ${GREEN}  $1  ${CLEAR}"
-        echo -e "Username:    ${GREEN}  $5  ${CLEAR}"
-        echo -e "Idfile:      ${GREEN}  $4  ${CLEAR}"
-        echo -e "Password:    ${GREEN}  $2  ${CLEAR}"
-        echo -e "local file:  ${GREEN}  $3  ${CLEAR}"
-        echo -e "remote file: ${GREEN}  $7  ${CLEAR}"
-        echo -e "Command:     ${GREEN}  $6  ${CLEAR}"
-    done < "$1"
+    process_servers debug_job
 }
 
 # Main logic based on mode
 case $mode in
-  "run")        run      "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" ;;
-  "script")     script   "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" ;;
-  "ping")       ping     "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" ;;
-  "ins")        ins      "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile" ;;
-  "download")   download "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile" ;;
-  "upload")     upload   "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" "$remotefile" ;;
-  "man")        man      "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" ;;
-  "debug")      debug    "$inventory" "$password" "$localfile" "$idfile" "$username" "$cmd" ;;
+  "run")        run ;;
+  "script")     script ;;
+  "ping")       ping ;;
+  "ins")        ins ;;
+  "download")   download ;;
+  "upload")     upload ;;
+  "man")        man ;;
+  "debug")      debug ;;
   *) show_help; exit 1;;
 esac
-
-
