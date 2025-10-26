@@ -128,6 +128,8 @@ test_update(){ # Todo: test append/overwrite modes
   echo ""
   echo "Seeding file =========================================="
   ./ssher upload -i _inv/test.inv -l _inv/test.inv -r inv
+  echo ""
+  echo "Collecting seed ======================================="
   ./ssher collect -i _inv/test.inv -l inv -r inv
 
   echo ""
@@ -143,12 +145,32 @@ test_update(){ # Todo: test append/overwrite modes
   ./ssher run -i _inv/test.inv -c 'cat inv'
 
   echo ""
+  echo "attempting append... =================================="
+  ./ssher update -i _inv/test.inv -a a -l inv -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -i _inv/test.inv -c 'cat inv'
+
+  echo ""
+  echo "attempting overwrite... =================================="
+  ./ssher update -i _inv/test.inv -a o -l inv -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -i _inv/test.inv -c 'cat inv'
+
+  echo ""
   echo "Cleaning up... ========================================"
   ./ssher run -i _inv/test.inv -c 'rm inv'
 
   echo ""
   echo "upload file if not exists ============================="
   ./ssher update -i _inv/test.inv -l inv -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -i _inv/test.inv -c 'cat inv'
 
   echo ""
   echo "final Cleaning up... ==================================="
