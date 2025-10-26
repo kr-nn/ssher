@@ -47,11 +47,11 @@ test_upload(){
   echo "Checking uploaded file... ============================="
   ./ssher run -i _inv/test.inv -c 'cat inv'
   echo "Attempting append... =================================="
-  ./ssher upload -i _inv/test.inv -l _inv/test.inv -r inv
+  ./ssher upload -i _inv/test.inv -a a -l _inv/test.inv -r inv
   echo "Checking uploaded file... ============================="
   ./ssher run -i _inv/test.inv -c 'cat inv'
   echo "Attempting overwrite... ==============================="
-  ./ssher upload -i _inv/test.inv -l _inv/test.inv -r inv
+  ./ssher upload -i _inv/test.inv -a o -l _inv/test.inv -r inv
   echo "Checking uploaded file... ============================="
   ./ssher run -i _inv/test.inv -c 'cat inv'
   echo "Cleaning up... ========================================"
