@@ -598,9 +598,11 @@ update_job() {
     local _sshcmd="${11}"
     shift 11
     local -a extra_args=("$@")
+    local ov=">>"
+    [ "$_overwrite" -eq 1 ] 2>/dev/null && ov=">"
     local content ssh_output status
     content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" "$_localfile" | sed '/^$/d')
-    ssh_output=$($_sshcmd "${_username}@${server}" "echo $content > $_remotefile" 2>&1 )
+    ssh_output=$($_sshcmd "${_username}@${server}" "echo $content $ov $_remotefile" 2>&1 )
     status=$?
     local _sshcmd="${11}"
     shift 11
