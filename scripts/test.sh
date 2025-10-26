@@ -13,8 +13,8 @@ test_all(){
 
 test_ping(){
   echo "PING: ==============================================="
-  echo "TEST: Ping mode: ./ssher -m ping -i ./_inv/test.inv"
-  ./ssher -m ping -i ./_inv/test.inv
+  echo "TEST: Ping mode: ./ssher ping -i ./_inv/test.inv"
+  ./ssher ping -i ./_inv/test.inv
 }
 
 test_run(){

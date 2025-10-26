@@ -11,48 +11,30 @@
 # This does NOT replace SALT/puppet/Chef
 # This will not expand past a few simple but robust capabilities
 
-#_ Initialize variables ==============================================================
+###############################################################
+### Initial Variables #########################################
+###############################################################
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 CLEAR='\033[0m'
 
-mode=0
-inventory=0
-options=0
-username=0
-password=0
-idfile=0
-localfile=0
-remotefile=0
-cmd=0
-jobs=$(nproc)
-usetui=0
-job_tmpdir=0
-current_runner=0
+###############################################################
+### Help Dialog ###############################################
+###############################################################
 
-if which sshpass &> /dev/null; then
-    sshpass=1
-else
-    echo -e "${RED}"
-    echo "WARNING: sshpass not installed or not in path."
-    echo "You will need to install it if you don't want to enter passwords manually"
-    echo -ne "${CLEAR}"
-    sshpass=0
-fi
-
-# shellcheck disable=SC2046
 show_help() {
   echo -e "
 $(printf '=%.0s' $(seq 1 $(tput cols)))
- ${GREEN}███████╗███████╗██╗  ██╗███████╗██████╗
+ ${GREEN}███████╗███████╗██╗  ██╗███████╗██████╗ 
  ${GREEN}██╔════╝██╔════╝██║  ██║██╔════╝██╔══██╗
  ${GREEN}███████╗███████╗███████║█████╗  ██████╔╝
  ${GREEN}╚════██║╚════██║██╔══██║██╔══╝  ██╔══██╗
  ${GREEN}███████║███████║██║  ██║███████╗██║  ██║
  ${GREEN}╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝${CLEAR}
 $(printf '=%.0s' $(seq 1 $(tput cols)))
-  Usage:${RED} ssher ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command'] [-J jobs]
+  Usage:${RED} $0 ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command'] [-J jobs]
 
   Options:
  ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'upload', 'collect', 'update', or 'man'.
@@ -114,7 +96,7 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
    ${RED}ssher ${GREEN}-m run -i servers.txt -u root -c 'systemctl --failed'                                              ${CLEAR}# list all failed services in your network
 
   PROTIPS:
-  ${RED}building inventories is easy with nmap:${GREEN} nmap -n -Pn -p 22 192.168.4.0/24 -oG - | grep 'open' | awk '{ print \$2 }'
+  ${RED}building inventories is easy with nmap:${GREEN} nmap -n -Pn -p 22 192.168.4.0/24 -oG - | grep 'open' | awk '{ print $2 }'
 
   ${RED}Create a Report that you can read:${CLEAR}
   ${GREEN}ssher -m ping -i ips.list |tee date.report${CLEAR} # This outputs the color mask for bash, make sure to cat the file to get the color output appropriately
@@ -124,85 +106,182 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))" | less
 
 }
 
-#_ Parse & setup options ==============================================================
-while getopts ":m:i:o:u:s:pl:r:c:J:" opt; do
-  case $opt in
-    m) mode="$OPTARG";;
-    i) inventory="$OPTARG";;
-    o) options="$OPTARG";;
-    p) password="1";;
-    l) localfile="$OPTARG";;
-    r) remotefile="$OPTARG";;
-    s) idfile="$OPTARG";;
-    u) username="$OPTARG";;
-    c) cmd="$OPTARG";;
-    J) jobs="$OPTARG";;
-    *) show_help; exit 1;;
+###############################################################
+### Argument parser ###########################################
+###############################################################
+# Capture original output for debugging
+origcommand="$0 $@"
+
+# Detect option collisions
+declare -A SET SRC
+set_opt() {
+  local key=$1 val=$2 src=$3
+  if [[ -v SET[$key] ]]; then
+    echo "error: '$key' specified twice (first ${SRC[$key]}, then $src)"
+    exit 1
+  fi
+  SET[$key]=$val
+  SRC[$key]=$src
+  printf -v "$key" '%s' "$val"
+}
+
+
+# Parse
+OPTS=$(getopt -o m:i:o:u:s:a:pl:r:c:d -l debug:,dryrun:,inventory:,options:,user:,username:,append:,idfile:,password,localfile:,remotefile:,cmd:,command: -- "$@") || exit 2
+eval set -- "$OPTS"
+while true; do
+  case "$1" in
+    -i|--inventory)          set_opt inventory   "$2" "$1";  shift 2;;
+    -o|--options)            set_opt options     "$2" "$1";  shift 2;;
+    -u|--user|--username)    set_opt username    "$2" "$1";  shift 2;;
+    -s|--idfile)             set_opt idfile      "$2" "$1";  shift 2;;
+    -l|--localfile)          set_opt localfile   "$2" "$1";  shift 2;;
+    -r|--remotefile)         set_opt remotefile  "$2" "$1";  shift 2;;
+    -a|--append)             set_opt append      "$2" "$1";  shift 2;;
+    -c|--cmd|--command)      set_opt cmd         "$2" "$1";  shift 2;;
+    -p|--password)           set_opt password    "1"  "$1";  shift 1;;
+    -d|--dryrun|--debug)     set_opt debug       "1"  "$1";  shift 1;;
+    --) shift; break;;
   esac
 done
 
-[[ "$mode" == 0 || "$inventory" == 0 ]] && { show_help; exit 1; }
-[[ ! -f "$inventory" ]] && { echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."; exit 1; }
+[ ! -z $debug ] && echo "Original Command: $origcommand";
 
-[[ "$mode" == "run" ]] && [[ "$cmd" == 0 ]] && { echo "FATAL: Run mode requires -c"; exit 1; }
+# Set mode
+mode="${1:-}"; shift
 
-[[ "$localfile" == 0 ]] && { localfile="$HOME/.ssh/id_ed25519.pub"; }
-# shellcheck disable=SC2088
-[[ "$remotefile" == 0 ]] && { remotefile='~/.ssh/authorized_keys'; }
-[[ "$username" == 0 ]] && { username=$USER; }
+case "$mode" in
+    test|ping|run|script|upload|collect|update|man|manual) ;;
+    ""|*) show_help; exit 1; ;;
+esac
 
-# shellcheck disable=SC2015
-[[ "$idfile" == 0 ]] && { idfilecmd=""; idfile="$HOME/.ssh/config"; } || { idfilecmd="-i ${idfile} "; }
-[[ ! -f ${idfile} ]] && { echo "FATAL: Selected private key or configuration file ${idfile} doesn't seem to exist."; exit 1; }
+###############################################################
+### Preflight #################################################
+###############################################################
 
-[[ $sshpass -eq 0 && $password == "1" ]] && { echo "FATAL: Using -p with sshpass not available."; exit 1; }
-[[ "$password" == "1" ]] && { read -r -s -p "Input the password: " password; }
+#######################
+### Capabilities ######
+#######################
+[ -z $(command -v sshpass) ] || { sshpass=1; }
 
-[[ $mode == "upload" ]] && { echo ""; read -r -p "Append or overwrite? [a/o] " write; }
-# shellcheck disable=SC2015
-[[ $write == "o" || $write == "O" ]] && { overwrite=1; } || { overwrite=0; }
+#######################
+### Defaults ##########
+#######################
+[ -z "$username" ] && username=$USER
+[ ! -z "$idfile" ] && idfilecmd=" -i ${idfile}";
+[ -z "$options" ] && { optionscmd=" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
+[ ! -z "$options" ] && { optionscmd=" ${options} -o BatchMode=yes"; } # TODO Create batch mode toggle (this can cause dangerous breakages is why it should be dedicated)
 
-# shellcheck disable=SC2015
-[[ "$options" == 0 ]] && { optionscmd="-o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes"; } || { optionscmd="${options}"; }
+#######################
+### Early failures ####
+#######################
+[ -z "$mode" ] || [ -z "$inventory" ] && { show_help && exit 1; }
+[ ! -f "$inventory" ] && { echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."; exit 1; }
+[ ! -z "$password" ] && [ -z "$sshpass" ] && { echo "FATAL: sshpass is not available and -p was used"; exit 1; }
+if [ ! -z "$idfile" ]; then # We still continue because you can defer to external configuration for auth id
+  [ ! -f "$idfile" ] && { echo "FATAL: Selected private key ${idfile} doesn't seem to exist."; exit 1; }
+  ssh-keygen -yf $idfile &>/dev/null || { echo "FATAL: Selected private key ${idfile} is malformed, ensure this is a real key"; exit 1; }
+fi
+if [ ! -z "$append" ]; then
+  case $append in
+      "o"|"O"|"overwrite"|"a"|"A"|"append") ;;
+      ""|*) echo "FATAL: --append offered with no valid argument"; exit 1;
+  esac
+fi
+case $mode in "test"|"script"|"upload"|"collect"|"update")
+    [ -z "$localfile" ] && { echo "FATAL: Local file required when in $mode mode"; exit 1; } ;;
+esac
+case $mode in "test"|"upload"|"collect"|"update")
+    [ -z "$remotefile" ] && { echo "FATAL: Remote file required when in $mode mode"; exit 1; } ;;
+esac
+case $mode in "test"|"run")
+    [ -z "$cmd" ] && { echo "FATAL: Command is required in run mode"; exit 1; } ;;
+esac
 
-# shellcheck disable=SC2015
-[[ $password == 0 ]] && { passwordcmd=""; } || { passwordcmd="sshpass -p ${password} "; passwordcmdredacted="sshpass -p REDACTED "; }
+#######################
+### Inputs Required ###
+#######################
+[ -z "$password" ] || { read -s -p "Please enter the password for traditional authentication: " password; echo ""; }
+[ "$mode" == "update" ] || [ "$mode" == "test" ] && [ -z "$append" ] && read -n 1 -r -p "Using update mode, Append or Override? O/A? " append
+case "$append" in
+    "o"|"O"|"overwrite") overwrite=1 ;;
+  *) ;;
+esac
 
-sshcmdredacted="${passwordcmdredacted}ssh ${idfilecmd} ${optionscmd}"
-sshcmd="${passwordcmd}ssh ${idfilecmd} ${optionscmd}"
+#######################
+### command builder ###
+#######################
+[ ! -z "$password" ] && { passwordcmd="sshpass -p ${password} "; passwordcmdredacted="sshpass -p REDACTED "; }
+
+sshcmdredacted="${passwordcmdredacted}ssh $username@-------${idfilecmd}${optionscmd}"
+sshcmd="${passwordcmd}ssh ${idfilecmd}${optionscmd}"
+
+#######################
+### Confirmation ######
+#######################
 
 echo ""
-echo -e "Private Key: ${GREEN}$idfile${CLEAR} (change with -s)"
-echo -e "local file: ${GREEN}$localfile${CLEAR} (change with -l)"
+[ ! -z "$idfilecmd" ] && echo -e "Private Key: ${GREEN}$idfile${CLEAR}"
 
-# shellcheck disable=SC2015
-[[ $overwrite == 1 ]] && { echo -e "Write mode: ${RED}Overwrite${CLEAR}"; } || { echo -e "Write mode: ${GREEN}Append${CLEAR}"; }
-[[ $remotefile != 0 ]] && { echo -e "remote file: ${GREEN}$remotefile${CLEAR}"; }
+if [ "$mode" == "upload" ] || [ "$mode" == "test" ]; then
+  if [ "$overwrite" == "1" ]; then
+      echo -e "Write mode: ${RED}Overwrite${CLEAR}"
+  else
+      echo -e "Write mode: ${GREEN}Append${CLEAR}"
+  fi
+fi
 
-echo -e "Username: ${GREEN}$username${CLEAR} (change with -u)"
+case $mode in "test"|"script"|"upload"|"collect"|"update")
+    echo -e "local file: ${GREEN}$localfile${CLEAR}" ;;
+esac
+case $mode in "test"|"upload"|"collect"|"update")
+    echo -e "remote file: ${GREEN}$remotefile${CLEAR}" ;;
+esac
+
+echo -e "Username: ${GREEN}$username${CLEAR}"
 echo -e "Servers to attempt (cat the file if you're unsure): ${GREEN}$inventory${CLEAR}"
 
-[[ "$cmd" != 0 ]] && { echo -e "Command: ${GREEN}$cmd${CLEAR}"; }
+case $mode in "test"|"run")
+    echo -e "Command: ${GREEN}$cmd${CLEAR}" ;;
+esac
 
 echo -e "SSH: ${GREEN}${sshcmdredacted}${CLEAR}"
 
-countdowntime=3
-while [ $countdowntime -gt 0 ]; do
-    echo -ne "${RED}Make sure to read this! $countdowntime\033[0K\r${CLEAR}"
-    sleep 1
-    countdowntime=$((countdowntime-1))
-done
+if [ ! "$mode" == "test" ]; then
+  countdowntime=3
+  while [ $countdowntime -gt 0 ]; do
+      echo -ne "${RED}Make sure to read this! $countdowntime\033[0K\r${CLEAR}"
+      sleep 1
+      countdowntime=$((countdowntime-1))
+  done
 
-read -r -p "Are you sure you want to run this? [y/n] " confirm
-case "$confirm" in
-    [yY][eE][sS]|[yY])
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-echo ""
-echo "=============================================================="
+  read -n 1 -r -p "Are you sure you want to run this? [y/n] " confirm
+  case "$confirm" in
+      [yY][eE][sS]|[yY])
+          ;;
+      *)
+          exit 1
+          ;;
+  esac
+  echo ""
+  echo "=============================================================="
+else
+  case $mode in
+    "run") echo "run was triggered" ;;
+    "script") echo "script was triggered" ;;
+    "ping") echo "ping was triggered" ;;
+    "upload") echo "upload was triggered" ;;
+    "collect") echo "collect was triggered" ;;
+    "update") echo "update was triggered" ;;
+    "man"|"manual") echo "manual was triggered" ;;
+    "test") echo "We are testing" ;;
+  esac
+  exit 0
+fi
+
+###############################################################
+### helper functions ##########################################
+###############################################################
 
 draw_tui() {
     queued=$((total_hosts - success_hosts - failed_hosts))
@@ -289,7 +368,9 @@ process_servers() {
     trap - EXIT
 }
 
-#_ Jobs ==============================================================
+###############################################################
+### Jobs ######################################################
+###############################################################
 run_job() {
     server="$1"
     outfile="$2"
@@ -448,7 +529,10 @@ debug_job() {
     } > "$outfile"
 }
 
-#_ Run ==============================================================
+###############################################################
+### Modes #####################################################
+###############################################################
+
 run() {
     [[ "$cmd" == 0 ]] && { echo "FATAL: you need -c to run a command on the servers"; exit 0; }
     [[ "$cmd" == '' ]] && { echo "FATAL: empty commands make your shell broken"; exit 1; }
