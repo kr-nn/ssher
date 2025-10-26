@@ -122,7 +122,7 @@ test_collect(){
   ./ssher collect -i _inv/test.inv
 }
 
-test_update(){
+test_update(){ # Todo: test append/overwrite modes
   echo "UPDATE: ==============================================="
 
   echo ""
