@@ -55,16 +55,16 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
   Usage:${RED} ssher ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command'] [-J jobs]
 
   Options:
- ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'ins', 'download', 'upload', or 'man'.
+ ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'upload', 'collect', 'update', or 'man'.
  ${RED}                          ${GREEN}use 'debug' to get output of the options per server
  ${RED}                          ${GREEN}This option is required.
  ${RED}
  ${RED}                          ${GREEN}run       =  Run a command on all the servers
  ${RED}                          ${GREEN}script    =  Like run except runs a full script you have locally. If you need to run a script on the server or from a remote location use the run mode.
  ${RED}                          ${GREEN}ping      =  Test SSH access to servers, reports the auth mechanism
- ${RED}                          ${GREEN}ins       =  Add contents of a local file to a target file on the server. Good for pushing public keys with password mode (better than ssh-copy-id)
- ${RED}                          ${GREEN}download  =  Pull contents from remote servers to the local server. Great for auditing/updating configurations.
- ${RED}                          ${GREEN}upload    =  Push contents from local server to the remote servers. Great for uploading configurations.
+ ${RED}                          ${GREEN}upload    =  Add contents of a local file to a target file on the server. Good for pushing public keys with password mode (better than ssh-copy-id)
+ ${RED}                          ${GREEN}collect   =  Pull contents from remote servers to the local server. Great for auditing/updating configurations.
+ ${RED}                          ${GREEN}update    =  Take a collect file from collect mode and upload to each server.
  ${RED}                          ${GREEN}man       =  Run tasks on the servers manually in sequence. (Good for when you need to authenticate using run) (Good for macros)
  ${RED}                          ${GREEN}debug     =  output what is going to run on each server. Useful when using special variables to change things dynamically
  ${RED}
@@ -102,14 +102,14 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
   Examples:
    ${RED}ssher ${GREEN}-m run -i oldservers.txt -c 'apt update && apt upgrade -y && apt autoremove -y'                    ${CLEAR}# Update a list of servers
    ${RED}ssher ${GREEN}-m ping -i serversthatshouldbelocked.txt -u root -p | tee sshaudit.txt                             ${CLEAR}# Check what servers are not secured
-   ${RED}ssher ${GREEN}-m ins -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
+   ${RED}ssher ${GREEN}-m upload -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
    ${RED}ssher ${GREEN}-m ping -i servers.txt -u root -o '-J root@jumphost.ip' -u root                                    ${CLEAR}# Add a jumphost for pivoting from
-   ${RED}ssher ${GREEN}-m ins -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
+   ${RED}ssher ${GREEN}-m upload -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
    ${RED}ssher ${GREEN}-m man -i bootstrapthese.txt -u root -p                                                            ${CLEAR}# Manually perform common tasks back to back
    ${RED}ssher ${GREEN}-m ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
    ${RED}ssher ${GREEN}-m script -i servers.txt -u root -l ~/.local/bin/profileconfig.sh                                  ${CLEAR}# configure your shell profile on all servers
-   ${RED}ssher ${GREEN}-m download -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
-   ${RED}ssher ${GREEN}-m upload -i servers.txt -u root -l ~/.confs/static_ips -r /etc/networking/interfaces              ${CLEAR}# after downloading interfaces files you and update them, then upload them
+   ${RED}ssher ${GREEN}-m collect -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
+   ${RED}ssher ${GREEN}-m update -i servers.txt -u root -l ~/.confs/static_ips -r /etc/networking/interfaces              ${CLEAR}# after collecting interfaces files you and update them, then upload them
    ${RED}ssher ${GREEN}-m run -i servers.txt -u root -c 'reboot'                                                          ${CLEAR}# reboot all servers
    ${RED}ssher ${GREEN}-m run -i servers.txt -u root -c 'systemctl --failed'                                              ${CLEAR}# list all failed services in your network
 
@@ -158,7 +158,7 @@ done
 [[ $sshpass -eq 0 && $password == "1" ]] && { echo "FATAL: Using -p with sshpass not available."; exit 1; }
 [[ "$password" == "1" ]] && { read -r -s -p "Input the password: " password; }
 
-[[ $mode == "ins" ]] && { echo ""; read -r -p "Append or overwrite? [a/o] " write; }
+[[ $mode == "upload" ]] && { echo ""; read -r -p "Append or overwrite? [a/o] " write; }
 # shellcheck disable=SC2015
 [[ $write == "o" || $write == "O" ]] && { overwrite=1; } || { overwrite=0; }
 
@@ -273,7 +273,7 @@ process_servers() {
         tput cnorm
         usetui=0
     fi
-    if [ "$mode" == "download" ]; then
+    if [ "$mode" == "collect" ]; then
         for ((idx=0; idx<total_hosts; idx++)); do
             server="${servers[$idx]}"
             echo "" >> "$localfile"
@@ -293,7 +293,7 @@ process_servers() {
 run_job() {
     server="$1"
     outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" "${cmd}" 2>&1 < /dev/null)
+    ssh_output=$($sshcmd "$username@${server}" "${cmd}" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -314,7 +314,7 @@ run_job() {
 script_job() {
     server="$1"
     outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" 'bash -s' < "${localfile}" 2>&1 < /dev/null)
+    ssh_output=$($sshcmd "$username@${server}" 'bash -s' < "$localfile" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -335,7 +335,7 @@ script_job() {
 ping_job() {
     server="$1"
     outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" -v exit 0 2>&1 < /dev/null)
+    ssh_output=$($sshcmd "$username@${server}" -v exit 0 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -357,10 +357,15 @@ ping_job() {
     return $status
 }
 
-ins_job() {
+upload_job() {
+    if [ "$overwrite" -eq 1 ]; then
+      ov=">"
+    else
+      ov=">>"
+    fi
     server="$1"
     outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" "cat >> ${remotefile}" < "$localfile" 2>&1 < /dev/null)
+    ssh_output=$($sshcmd "$username@${server}" "cat $ov ${remotefile}" < "$localfile" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -379,11 +384,11 @@ ins_job() {
     return $status
 }
 
-download_job() {
+collect_job() {
     server="$1"
     outfile="$2"
     data_file="${outfile}.data"
-    ssh_output=$($sshcmd "$username@${server}" "cat ${remotefile}" > "$data_file" 2>&1 < /dev/null)
+    ssh_output=$($sshcmd "$username@${server}" "cat ${remotefile}" > "$data_file" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -402,11 +407,11 @@ download_job() {
     return $status
 }
 
-upload_job() {
+update_job() {
     server="$1"
     outfile="$2"
     content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" "$localfile" | sed '/^$/d')
-    ssh_output=$($sshcmd "$username@${server}" "echo $content > ${remotefile}" 2>&1 < /dev/null)
+    ssh_output=$($sshcmd "$username@${server}" "echo $content > $remotefile" 2>&1 )
     status=$?
     {
         echo "# ============================ ${server} ==================================="
@@ -472,8 +477,8 @@ ping() {
     process_servers ping_job
 }
 
-#_ insert ==============================================================
-ins() {
+#_ upload ==============================================================
+upload() {
     # Fail if requirements are missing
     if [ "$localfile" == 0 ]; then
         echo "FATAL: you need -l to have content to push"
@@ -491,11 +496,11 @@ ins() {
         exit 1
     fi
 
-    process_servers ins_job
+    process_servers upload_job
 }
 
-#_ Download ==============================================================
-download() {
+#_ collect ==============================================================
+collect() {
 
     if [ "$localfile" == 0 ]; then
         echo "FATAL: you need -l to put the content somewhere"
@@ -507,11 +512,11 @@ download() {
         exit 0
     fi
 
-    process_servers download_job
+    process_servers collect_job
 }
 
-#_ upload ==============================================================
-upload() {
+#_ update ==============================================================
+update() {
 
     if [ "$localfile" == 0 ]; then
         echo "FATAL: you need -l to push the content somewhere"
@@ -522,7 +527,7 @@ upload() {
         exit 0
     fi
 
-    process_servers upload_job
+    process_servers update_job
 }
 
 #_ manual ==============================================================
@@ -542,9 +547,9 @@ case $mode in
   "run")        run ;;
   "script")     script ;;
   "ping")       ping ;;
-  "ins")        ins ;;
-  "download")   download ;;
   "upload")     upload ;;
+  "collect")    collect ;;
+  "update")     update;;
   "man")        man ;;
   "debug")      debug ;;
   *) show_help; exit 1;;

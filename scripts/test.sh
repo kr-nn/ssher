@@ -50,3 +50,5 @@ echo "TEST: no file"
 echo "TEST: Run mode (-c fail): ./ssher -m run -i ./_inv/test.inv -c 'nixos-version'"
 ./ssher -m run -i ./_inv/test.inv
 echo "======================================================="
+
+
