@@ -37,7 +37,7 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
   Usage:${RED} $0 ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command'] [-J jobs]
 
   Options:
- ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'upload', 'collect', 'update', or 'man'.
+ ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'upload', 'collect', 'update'
  ${RED}                          ${GREEN}use 'debug' to get output of the options per server
  ${RED}                          ${GREEN}This option is required.
  ${RED}
@@ -47,7 +47,6 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}                          ${GREEN}upload    =  Add contents of a local file to a target file on the server. Good for pushing public keys with password mode (better than ssh-copy-id)
  ${RED}                          ${GREEN}collect   =  Pull contents from remote servers to the local server. Great for auditing/updating configurations.
  ${RED}                          ${GREEN}update    =  Take a collect file from collect mode and upload to each server.
- ${RED}                          ${GREEN}man       =  Run tasks on the servers manually in sequence. (Good for when you need to authenticate using run) (Good for macros)
  ${RED}                          ${GREEN}debug     =  output what is going to run on each server. Useful when using special variables to change things dynamically
  ${RED}
  ${RED}   -i inventory_file      ${GREEN}Path to the file containing a list of server hostnames or IP addresses.
@@ -87,7 +86,6 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
    ${RED}ssher ${GREEN}-m upload -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
    ${RED}ssher ${GREEN}-m ping -i servers.txt -u root -o '-J root@jumphost.ip' -u root                                    ${CLEAR}# Add a jumphost for pivoting from
    ${RED}ssher ${GREEN}-m upload -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
-   ${RED}ssher ${GREEN}-m man -i bootstrapthese.txt -u root -p                                                            ${CLEAR}# Manually perform common tasks back to back
    ${RED}ssher ${GREEN}-m ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
    ${RED}ssher ${GREEN}-m script -i servers.txt -u root -l ~/.local/bin/profileconfig.sh                                  ${CLEAR}# configure your shell profile on all servers
    ${RED}ssher ${GREEN}-m collect -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
@@ -151,7 +149,7 @@ done
 mode="${1:-}"; shift
 
 case "$mode" in
-    test|ping|run|script|upload|collect|update|man|manual) ;;
+    test|ping|run|script|upload|collect|update) ;;
     ""|*) show_help; exit 1; ;;
 esac
 
@@ -276,7 +274,6 @@ else
     "upload") echo "upload was triggered" ;;
     "collect") echo "collect was triggered" ;;
     "update") echo "update was triggered" ;;
-    "man"|"manual") echo "manual was triggered" ;;
     "test") echo "We are testing" ;;
   esac
   exit 0
@@ -735,12 +732,6 @@ update() {
     process_servers update_job
 }
 
-#_ manual ==============================================================
-man() {
-    while IFS= read -r server; do
-        $sshcmd "$username@${server}"
-    done < "$inventory"
-}
 
 #_ debug ==============================================================
 debug() {
@@ -755,7 +746,6 @@ case $mode in
   "upload")     upload ;;
   "collect")    collect ;;
   "update")     update;;
-  "man")        man ;;
   "debug")      debug ;;
   *) show_help; exit 1;;
 esac
