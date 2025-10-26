@@ -34,10 +34,10 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${GREEN}███████║███████║██║  ██║███████╗██║  ██║
  ${GREEN}╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝${CLEAR}
 $(printf '=%.0s' $(seq 1 $(tput cols)))
-  Usage:${RED} $0 ${GREEN}-m mode -i inventory_file_path [-u username] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command'] [-J jobs]
+  Usage:${RED} $0 ${GREEN}mode -i inventory_file_path [-u username] [ -o 'ssh options' ] [-p] [-s private_key] [-l local_file] [-r remote_file] [-c 'command'] [-J jobs] [-a a|o]
 
   Options:
- ${RED}   -m mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'upload', 'collect', 'update'
+ ${RED}      mode                ${GREEN}Specifies the mode of operation. Options are 'run', 'script', 'ping', 'upload', 'collect', 'update'
  ${RED}                          ${GREEN}use 'debug' to get output of the options per server
  ${RED}                          ${GREEN}This option is required.
  ${RED}
@@ -54,11 +54,13 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}
  ${RED}   -o options             ${GREEN}define custom ssh options
  ${RED}                          ${GREEN}just like in normal ssh you can pass -o options.
- ${RED}                          ${GREEN}by default stricthostchecking is disabled and connection timeouts are set to 8 seconds
+ ${RED}                          ${GREEN}by default stricthostchecking is disabled, connection timeouts are set to 8 seconds, and batchmode is activated
  ${RED}                          ${GREEN}this is not limited to -o you can pass ANY ssh options to this flag
  ${RED}                          ${GREEN}If you use this option stricthostchecking and the connectiontimout options are removed, you will need to add them again
  ${RED}
  ${RED}   -J jobs                ${GREEN}parallel jobs. default is cpu count
+ ${RED}
+ ${RED}   -a append/overwrite    ${GREEN}determines automatically without prompt whether you want to append or overwrite files in certain modes
  ${RED}
  ${RED}   -p                     ${GREEN}Prompts for a password for password authentication. (THIS REQUIRES SSHPASS)
  ${RED}                          ${GREEN}If not provided, you will have to enter the password for each server that needs it.
@@ -81,23 +83,23 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}                          ${GREEN}Wrap with \"\" when there's spaces (most of the time)
  ${RED}
   Examples:
-   ${RED}ssher ${GREEN}-m run -i oldservers.txt -c 'apt update && apt upgrade -y && apt autoremove -y'                    ${CLEAR}# Update a list of servers
-   ${RED}ssher ${GREEN}-m ping -i serversthatshouldbelocked.txt -u root -p | tee sshaudit.txt                             ${CLEAR}# Check what servers are not secured
-   ${RED}ssher ${GREEN}-m upload -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
-   ${RED}ssher ${GREEN}-m ping -i servers.txt -u root -o '-J root@jumphost.ip' -u root                                    ${CLEAR}# Add a jumphost for pivoting from
-   ${RED}ssher ${GREEN}-m upload -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
-   ${RED}ssher ${GREEN}-m ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
-   ${RED}ssher ${GREEN}-m script -i servers.txt -u root -l ~/.local/bin/profileconfig.sh                                  ${CLEAR}# configure your shell profile on all servers
-   ${RED}ssher ${GREEN}-m collect -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
-   ${RED}ssher ${GREEN}-m update -i servers.txt -u root -l ~/.confs/static_ips -r /etc/networking/interfaces              ${CLEAR}# after collecting interfaces files you and update them, then upload them
-   ${RED}ssher ${GREEN}-m run -i servers.txt -u root -c 'reboot'                                                          ${CLEAR}# reboot all servers
-   ${RED}ssher ${GREEN}-m run -i servers.txt -u root -c 'systemctl --failed'                                              ${CLEAR}# list all failed services in your network
+   ${RED}ssher ${GREEN}run -i oldservers.txt -c 'apt update && apt upgrade -y && apt autoremove -y'                    ${CLEAR}# Update a list of servers
+   ${RED}ssher ${GREEN}ping -i serversthatshouldbelocked.txt -u root -p | tee sshaudit.txt                             ${CLEAR}# Check what servers are not secured
+   ${RED}ssher ${GREEN}upload -i newserver.txt -u newkid -l ~/.ssh/newuser.pub                                            ${CLEAR}# Add a new users public key to the server
+   ${RED}ssher ${GREEN}ping -i servers.txt -u root -o '-J root@jumphost.ip' -u root                                    ${CLEAR}# Add a jumphost for pivoting from
+   ${RED}ssher ${GREEN}upload -i service.txt -u root -l ./config.txt -d /etc/service/configuration.txt                    ${CLEAR}# set configuration file on server
+   ${RED}ssher ${GREEN}ping -i servers.txt -u user -s ~/.ssh/newkey.id_rsa                                             ${CLEAR}# Check what servers have your new key
+   ${RED}ssher ${GREEN}script -i servers.txt -u root -l ~/.local/bin/profileconfig.sh                                  ${CLEAR}# configure your shell profile on all servers
+   ${RED}ssher ${GREEN}collect -i servers.txt -u root -l ~/reports/\$date_auth.log -r /var/log/auth.log                ${CLEAR}# pull all the auth logs to investigate today's access
+   ${RED}ssher ${GREEN}update -i servers.txt -u root -l ~/.confs/static_ips -r /etc/networking/interfaces              ${CLEAR}# after collecting interfaces files you and update them, then upload them
+   ${RED}ssher ${GREEN}run -i servers.txt -u root -c 'reboot'                                                          ${CLEAR}# reboot all servers
+   ${RED}ssher ${GREEN}run -i servers.txt -u root -c 'systemctl --failed'                                              ${CLEAR}# list all failed services in your network
 
   PROTIPS:
   ${RED}building inventories is easy with nmap:${GREEN} nmap -n -Pn -p 22 192.168.4.0/24 -oG - | grep 'open' | awk '{ print $2 }'
 
   ${RED}Create a Report that you can read:${CLEAR}
-  ${GREEN}ssher -m ping -i ips.list |tee date.report${CLEAR} # This outputs the color mask for bash, make sure to cat the file to get the color output appropriately
+  ${GREEN}ssher ping -i ips.list |tee date.report${CLEAR} # This outputs the color mask for bash, make sure to cat the file to get the color output appropriately
                              ${GREEN}cat date.report${CLEAR} # vim does not render ANSI escape codes without help use cat, more, less as much as you can
 
 $(printf '=%.0s' $(seq 1 $(tput cols)))" | less
