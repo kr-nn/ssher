@@ -144,6 +144,8 @@ done
 [[ "$mode" == 0 || "$inventory" == 0 ]] && { show_help; exit 1; }
 [[ ! -f "$inventory" ]] && { echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."; exit 1; }
 
+[[ "$mode" == "run" ]] && [[ "$cmd" == 0 ]] && { echo "FATAL: Run mode requires -c"; exit 1; }
+
 [[ "$localfile" == 0 ]] && { localfile="$HOME/.ssh/id_ed25519.pub"; }
 # shellcheck disable=SC2088
 [[ "$remotefile" == 0 ]] && { remotefile='~/.ssh/authorized_keys'; }
