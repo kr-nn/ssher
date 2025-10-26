@@ -194,6 +194,9 @@ esac
 case $mode in "test"|"upload"|"collect"|"update")
     [ -z "$remotefile" ] && { echo "FATAL: Remote file required when in $mode mode"; exit 1; } ;;
 esac
+case $mode in "test"|"script"|"upload"|"update")
+    [ -f "$localfile" ] || { echo "FATAL: Local file $localfile doesn't seem to exist"; exit 1; } ;;
+esac
 case $mode in "test"|"run")
     [ -z "$cmd" ] && { echo "FATAL: Command is required in run mode"; exit 1; } ;;
 esac
@@ -298,15 +301,51 @@ launch_job() {
     idx="$1"
     server="${servers[$idx]}"
     outfile="$job_tmpdir/$idx"
+    local extra_string="${server_extras[$idx]}"
+    local -a extra_args=()
+    if [ -n "$extra_string" ]; then
+        IFS=' ' read -r -a extra_args <<< "$extra_string"
+    fi
+    local ov="${overwrite:-0}"
     (
-        "${current_runner}" "$server" "$outfile"
+        "${current_runner}" \
+            "$server" \
+            "$outfile" \
+            "$inventory" \
+            "$password" \
+            "$localfile" \
+            "$idfile" \
+            "$username" \
+            "$cmd" \
+            "$remotefile" \
+            "$ov" \
+            "$sshcmd" \
+            "${extra_args[@]}"
     ) &
     pids[$idx]=$!
 }
 
 process_servers() {
     current_runner="$1"
-    mapfile -t servers < "$inventory"
+    jobs="${jobs:-$(command -v nproc >/dev/null 2>&1 && nproc || echo 1)}"
+    if ! [[ "$jobs" =~ ^[0-9]+$ ]] || [ "$jobs" -lt 1 ]; then
+        jobs=1
+    fi
+    usetui=0
+    local -a servers_raw=()
+    mapfile -t servers_raw < "$inventory"
+    servers=()
+    server_extras=()
+    for entry in "${servers_raw[@]}"; do
+        entry="${entry%%$'\r'}"
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        [[ -z "${entry}" ]] && continue
+        [[ "${entry:0:1}" == "#" ]] && continue
+        local host rest=""
+        IFS=' ' read -r host rest <<< "$entry"
+        servers+=("$host")
+        server_extras+=("$rest")
+    done
     total_hosts=${#servers[@]}
     [[ $total_hosts -eq 0 ]] && { cleanup_jobs; trap - EXIT; return; }
     success_hosts=0
@@ -372,9 +411,21 @@ process_servers() {
 ### Jobs ######################################################
 ###############################################################
 run_job() {
-    server="$1"
-    outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" "${cmd}" 2>&1 )
+    local server="$1"
+    local outfile="$2"
+    local _inventory="$3"
+    local _password="$4"
+    local _localfile="$5"
+    local _idfile="$6"
+    local _username="$7"
+    local _cmd="$8"
+    local _remotefile="$9"
+    local _overwrite="${10:-0}"
+    local _sshcmd="${11}"
+    shift 11
+    local -a extra_args=("$@")
+    local ssh_output status
+    ssh_output=$($_sshcmd "${_username}@${server}" "${_cmd}" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -393,9 +444,21 @@ run_job() {
 }
 
 script_job() {
-    server="$1"
-    outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" 'bash -s' < "$localfile" 2>&1 )
+    local server="$1"
+    local outfile="$2"
+    local _inventory="$3"
+    local _password="$4"
+    local _localfile="$5"
+    local _idfile="$6"
+    local _username="$7"
+    local _cmd="$8"
+    local _remotefile="$9"
+    local _overwrite="${10:-0}"
+    local _sshcmd="${11}"
+    shift 11
+    local -a extra_args=("$@")
+    local ssh_output status
+    ssh_output=$($_sshcmd "${_username}@${server}" 'bash -s' < "$_localfile" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -414,9 +477,21 @@ script_job() {
 }
 
 ping_job() {
-    server="$1"
-    outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" -v exit 0 2>&1 )
+    local server="$1"
+    local outfile="$2"
+    local _inventory="$3"
+    local _password="$4"
+    local _localfile="$5"
+    local _idfile="$6"
+    local _username="$7"
+    local _cmd="$8"
+    local _remotefile="$9"
+    local _overwrite="${10:-0}"
+    local _sshcmd="${11}"
+    shift 11
+    local -a extra_args=("$@")
+    local ssh_output status
+    ssh_output=$($_sshcmd "${_username}@${server}" -v exit 0 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
@@ -439,21 +514,30 @@ ping_job() {
 }
 
 upload_job() {
-    if [ "$overwrite" -eq 1 ]; then
-      ov=">"
-    else
-      ov=">>"
-    fi
-    server="$1"
-    outfile="$2"
-    ssh_output=$($sshcmd "$username@${server}" "cat $ov ${remotefile}" < "$localfile" 2>&1 )
+    local server="$1"
+    local outfile="$2"
+    local _inventory="$3"
+    local _password="$4"
+    local _localfile="$5"
+    local _idfile="$6"
+    local _username="$7"
+    local _cmd="$8"
+    local _remotefile="$9"
+    local _overwrite="${10:-0}"
+    local _sshcmd="${11}"
+    shift 11
+    local -a extra_args=("$@")
+    local ov=">>"
+    [ "$_overwrite" -eq 1 ] 2>/dev/null && ov=">"
+    local ssh_output status
+    ssh_output=$($_sshcmd "${_username}@${server}" "cat $ov ${_remotefile}" < "$_localfile" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
-            echo "Wrote: $localfile"
-            echo "To: $remotefile"
+            echo "Wrote: $_localfile"
+            echo "To: $_remotefile"
             echo "=============================================================="
         else
             echo -e "${RED}FAILED ${server}${CLEAR}"
@@ -466,17 +550,29 @@ upload_job() {
 }
 
 collect_job() {
-    server="$1"
-    outfile="$2"
-    data_file="${outfile}.data"
-    ssh_output=$($sshcmd "$username@${server}" "cat ${remotefile}" > "$data_file" 2>&1 )
+    local server="$1"
+    local outfile="$2"
+    local _inventory="$3"
+    local _password="$4"
+    local _localfile="$5"
+    local _idfile="$6"
+    local _username="$7"
+    local _cmd="$8"
+    local _remotefile="$9"
+    local _overwrite="${10:-0}"
+    local _sshcmd="${11}"
+    shift 11
+    local -a extra_args=("$@")
+    local data_file="${outfile}.data"
+    local ssh_output status
+    ssh_output=$($_sshcmd "${_username}@${server}" "cat ${_remotefile}" > "$data_file" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
-            echo "Wrote: $remotefile"
-            echo "To: $localfile"
+            echo "Wrote: $_remotefile"
+            echo "To: $_localfile"
             echo "=============================================================="
         else
             echo -e "${RED}FAILED ${server}${CLEAR}"
@@ -489,18 +585,33 @@ collect_job() {
 }
 
 update_job() {
-    server="$1"
-    outfile="$2"
-    content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" "$localfile" | sed '/^$/d')
-    ssh_output=$($sshcmd "$username@${server}" "echo $content > $remotefile" 2>&1 )
+    local server="$1"
+    local outfile="$2"
+    local _inventory="$3"
+    local _password="$4"
+    local _localfile="$5"
+    local _idfile="$6"
+    local _username="$7"
+    local _cmd="$8"
+    local _remotefile="$9"
+    local _overwrite="${10:-0}"
+    local _sshcmd="${11}"
+    shift 11
+    local -a extra_args=("$@")
+    local content ssh_output status
+    content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" "$_localfile" | sed '/^$/d')
+    ssh_output=$($_sshcmd "${_username}@${server}" "echo $content > $_remotefile" 2>&1 )
     status=$?
+    local _sshcmd="${11}"
+    shift 11
+    local -a extra_args=("$@")
     {
         echo "# ============================ ${server} ==================================="
         if [ $status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
-            echo "Wrote: $localfile"
-            echo "To: $remotefile"
+            echo "Wrote: $_localfile"
+            echo "To: $_remotefile"
             echo "=============================================================="
         else
             echo -e "${RED}FAILED ${server}${CLEAR}"
@@ -513,19 +624,27 @@ update_job() {
 }
 
 debug_job() {
-    server="$1"
-    outfile="$2"
+    local server="$1"
+    local outfile="$2"
+    local _inventory="$3"
+    local _password="$4"
+    local _localfile="$5"
+    local _idfile="$6"
+    local _username="$7"
+    local _cmd="$8"
+    local _remotefile="$9"
+    local _overwrite="${10:-0}"
     {
         echo "=============================================================="
         echo -e "${GREEN}debug mode - ${server}${CLEAR}"
         echo "--------------------------------------------------------------"
-        echo -e "Inventory:   ${GREEN}  $inventory  ${CLEAR}"
-        echo -e "Username:    ${GREEN}  $username  ${CLEAR}"
-        echo -e "Idfile:      ${GREEN}  $idfile  ${CLEAR}"
-        echo -e "Password:    ${GREEN}  $password  ${CLEAR}"
-        echo -e "local file:  ${GREEN}  $localfile  ${CLEAR}"
-        echo -e "remote file: ${GREEN}  $remotefile  ${CLEAR}"
-        echo -e "Command:     ${GREEN}  $cmd  ${CLEAR}"
+        echo -e "Inventory:   ${GREEN}  ${_inventory}  ${CLEAR}"
+        echo -e "Username:    ${GREEN}  ${_username}  ${CLEAR}"
+        echo -e "Idfile:      ${GREEN}  ${_idfile}  ${CLEAR}"
+        echo -e "Password:    ${GREEN}  ${_password}  ${CLEAR}"
+        echo -e "local file:  ${GREEN}  ${_localfile}  ${CLEAR}"
+        echo -e "remote file: ${GREEN}  ${_remotefile}  ${CLEAR}"
+        echo -e "Command:     ${GREEN}  ${_cmd}  ${CLEAR}"
     } > "$outfile"
 }
 
