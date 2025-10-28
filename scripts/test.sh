@@ -15,12 +15,20 @@ test_ping(){
   echo "PING: ==============================================="
   echo "TEST: Ping mode: ./ssher ping -i ./_inv/test.inv"
   ./ssher ping -i ./_inv/test.inv
+
+  echo "PING (rich): ========================================"
+  echo "TEST: Ping mode: ./ssher ping -I ./_inv/test.json"
+  ./ssher ping -I ./_inv/test.json
 }
 
 test_run(){
   echo "RUN: ==============================================="
   echo "TEST: Run mode: ./ssher run -i ./_inv/test.inv -c 'nixos-version'"
   ./ssher run -i ./_inv/test.inv -c 'nixos-version'
+
+  echo "RUN (rich): ==============================================="
+  echo "TEST: Run mode: ./ssher run -I ./_inv/test.json -c 'nixos-version'"
+  ./ssher run -I ./_inv/test.json -c 'nixos-version'
 
   echo ""
   echo "RUN FAIL (command not declared): ====================="
@@ -31,6 +39,10 @@ test_script(){
   echo "SCRIPT: ==============================================="
   echo "TEST: script mode: ./ssher script -i _inv/test.inv -l ./scripts/nixos-version"
   ./ssher script -i _inv/test.inv -l ./scripts/nixos-version
+
+  echo "SCRIPT (rich): ==============================================="
+  echo "TEST: script mode: ./ssher script -I _inv/test.json -l ./scripts/nixos-version"
+  ./ssher script -I _inv/test.json -l ./scripts/nixos-version
 
   echo ""
   echo "SCRIPT FAIL (file doesn't exist): ====================="
@@ -72,6 +84,36 @@ test_upload(){
   echo "Cleaning up... ========================================"
   ./ssher run -i _inv/test.inv -c 'rm inv'
 
+  echo "UPLOAD (rich): ==============================================="
+
+  echo ""
+  echo "TEST: upload mode: ./ssher upload -I _inv/test.json -l _inv/test.json -r inv"
+  ./ssher upload -I _inv/test.json -l _inv/test.json -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -I _inv/test.json -c 'cat inv'
+
+  echo ""
+  echo "Attempting append... =================================="
+  ./ssher upload -I _inv/test.json -a a -l _inv/test.json -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -I _inv/test.json -c 'cat inv'
+
+  echo ""
+  echo "Attempting overwrite... ==============================="
+  ./ssher upload -I _inv/test.json -a o -l _inv/test.json -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -I _inv/test.json -c 'cat inv'
+
+  echo ""
+  echo "Cleaning up... ========================================"
+  ./ssher run -I _inv/test.json -c 'rm inv'
+
   echo ""
   echo "UPLOAD FAIL (remote not defined): ====================="
   ./ssher upload -i _inv/test.inv -l _inv/asdf.inv
@@ -108,6 +150,25 @@ test_collect(){
   echo "Cleaning up... ========================================"
   rm inv
   ./ssher run -i _inv/test.inv -c 'rm inv'
+
+  echo "COLLECT (rich): =============================================="
+
+  echo ""
+  echo "Seeding file =========================================="
+  ./ssher upload -I _inv/test.json -l _inv/test.json -r inv
+
+  echo ""
+  echo "TEST: Collect mode: ./ssher collect -I _inv/test.json -l inv -r inv"
+  ./ssher collect -I _inv/test.json -l inv -r inv
+
+  echo ""
+  echo "Checking local file... ============================="
+  cat inv
+
+  echo ""
+  echo "Cleaning up... ========================================"
+  rm inv
+  ./ssher run -I _inv/test.json -c 'rm inv'
 
   echo ""
   echo "COLLECT FAIL (remote not defined): ====================="
@@ -177,6 +238,60 @@ test_update(){ # Todo: test append/overwrite modes
   ./ssher run -i _inv/test.inv -c 'rm inv'
   rm inv
 
+  echo "UPDATE (rich): ==============================================="
+
+  echo ""
+  echo "Seeding file =========================================="
+  ./ssher upload -I _inv/test.json -l _inv/test.json -r inv
+  echo ""
+  echo "Collecting seed ======================================="
+  ./ssher collect -I _inv/test.json -l inv -r inv
+
+  echo ""
+  echo "Update this file so all servers have 1 item and remove this line" >> inv
+  vim inv
+
+  echo ""
+  echo "TEST: Update mode: ./ssher update -I _inv/test.json -l inv -r inv"
+  ./ssher update -I _inv/test.json -l inv -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -I _inv/test.json -c 'cat inv'
+
+  echo ""
+  echo "attempting append... =================================="
+  ./ssher update -I _inv/test.json -a a -l inv -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -I _inv/test.json -c 'cat inv'
+
+  echo ""
+  echo "attempting overwrite... =================================="
+  ./ssher update -I _inv/test.json -a o -l inv -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -I _inv/test.json -c 'cat inv'
+
+  echo ""
+  echo "Cleaning up... ========================================"
+  ./ssher run -I _inv/test.json -c 'rm inv'
+
+  echo ""
+  echo "upload file if not exists ============================="
+  ./ssher update -I _inv/test.json -l inv -r inv
+
+  echo ""
+  echo "Checking uploaded file... ============================="
+  ./ssher run -I _inv/test.json -c 'cat inv'
+
+  echo ""
+  echo "final Cleaning up... ==================================="
+  ./ssher run -I _inv/test.json -c 'rm inv'
+  rm inv
+
   echo ""
   echo "UPDATE FAIL (remote not defined): ====================="
 
@@ -196,17 +311,13 @@ test_update(){ # Todo: test append/overwrite modes
   ./ssher update -i _inv/test.inv -l ./asdf -r inv
 }
 
-test_manual(){
-  echo "MANUAL: ==============================================="
-  ./ssher man -i ./_inv/test.inv
-}
-
 test_expected_fails(){
   echo "TEST: Expected Fails =================================="
 
   echo ""
   echo "TEST: no mode ========================================="
   ./ssher -i ./_inv/test.inv
+  ./ssher -I ./_inv/test.json
 
   echo ""
   echo "TEST: no inventory ===================================="
@@ -215,6 +326,7 @@ test_expected_fails(){
   echo ""
   echo "TEST: inv doens't exist ==============================="
   ./ssher ping -i ./_inv/asdf.inv
+  ./ssher ping -I ./_inv/asdf.json
 }
 
 case "$mode" in
@@ -225,8 +337,7 @@ case "$mode" in
   upload)    test_upload ;;
   collect)   test_collect ;;
   update)    test_update ;;
-  manual)    test_manual ;;
   expected)  test_expected_fails ;;
-  *) echo "usage: $0 {all|ping|run|script|upload|collect|update|manual|expected}" >&2; exit 1 ;;
+  *) echo "usage: $0 {all|ping|run|script|upload|collect|update|expected}" >&2; exit 1 ;;
 esac
 
