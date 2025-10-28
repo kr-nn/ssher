@@ -52,6 +52,9 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}   -i inventory_file      ${GREEN}Path to the file containing a list of server hostnames or IP addresses.
  ${RED}                          ${GREEN}This option is required.
  ${RED}
+ ${RED}   -I inventory_file      ${GREEN}Rich inventory file (JSON). Enables host-level overrides.
+ ${RED}                          ${GREEN}Fields fall back to CLI defaults when omitted.
+ ${RED}
  ${RED}   -o options             ${GREEN}define custom ssh options
  ${RED}                          ${GREEN}just like in normal ssh you can pass -o options.
  ${RED}                          ${GREEN}by default stricthostchecking is disabled, connection timeouts are set to 8 seconds, and batchmode is activated
@@ -127,26 +130,37 @@ set_opt() {
 
 
 # Parse
-OPTS=$(getopt -o m:i:o:u:s:a:pl:r:c:d -l debug:,dryrun:,inventory:,options:,user:,username:,append:,idfile:,password,localfile:,remotefile:,cmd:,command: -- "$@") || exit 2
+OPTS=$(getopt -o m:i:I:o:u:s:a:pl:r:c:d -l debug:,dryrun:,inventory:,inventory-rich:,options:,user:,username:,append:,idfile:,password,localfile:,remotefile:,cmd:,command: -- "$@") || exit 2
 eval set -- "$OPTS"
 while true; do
   case "$1" in
-    -i|--inventory)          set_opt inventory   "$2" "$1";  shift 2;;
-    -o|--options)            set_opt options     "$2" "$1";  shift 2;;
-    -u|--user|--username)    set_opt username    "$2" "$1";  shift 2;;
-    -s|--idfile)             set_opt idfile      "$2" "$1";  shift 2;;
-    -l|--localfile)          set_opt localfile   "$2" "$1";  shift 2;;
-    -r|--remotefile)         set_opt remotefile  "$2" "$1";  shift 2;;
-    -a|--append)             set_opt append      "$2" "$1";  shift 2;;
-    -c|--cmd|--command)      set_opt cmd         "$2" "$1";  shift 2;;
-    -p|--password)           set_opt password    "1"  "$1";  shift 1;;
-    -d|--dryrun|--debug)     set_opt debug       "1"  "$1";  shift 1;;
+    -i|--inventory)          set_opt inventory       "$2" "$1";  shift 2;;
+    -I|--inventory-rich)     set_opt inventory_rich  "$2" "$1";  shift 2;;
+    -o|--options)            set_opt options         "$2" "$1";  shift 2;;
+    -u|--user|--username)    set_opt username        "$2" "$1";  shift 2;;
+    -s|--idfile)             set_opt idfile          "$2" "$1";  shift 2;;
+    -l|--localfile)          set_opt localfile       "$2" "$1";  shift 2;;
+    -r|--remotefile)         set_opt remotefile      "$2" "$1";  shift 2;;
+    -a|--append)             set_opt append          "$2" "$1";  shift 2;;
+    -c|--cmd|--command)      set_opt cmd             "$2" "$1";  shift 2;;
+    -p|--password)           set_opt password        "1"  "$1";  shift 1;;
+    -d|--dryrun|--debug)     set_opt debug           "1"  "$1";  shift 1;;
     --) shift; break;;
     -*) show_help; exit 1;;
   esac
 done
 
 [ ! -z $debug ] && echo "Original Command: $origcommand";
+
+rich_inventory=0
+if [ -n "${inventory_rich:-}" ]; then
+  if [ -n "${inventory:-}" ]; then
+    echo "FATAL: choose one inventory source (-i or -I)"
+    exit 1
+  fi
+  inventory="$inventory_rich"
+  rich_inventory=1
+fi
 
 # Set mode
 mode="${1:-}"; shift
@@ -164,20 +178,23 @@ esac
 ### Capabilities ######
 #######################
 [ -z $(command -v sshpass) ] || { sshpass=1; }
+[ -x $(command -v jq) ] || { jq=1; }
 
 #######################
 ### Defaults ##########
 #######################
 [ -z "$username" ] && username=$USER
-[ ! -z "$idfile" ] && idfilecmd=" -i ${idfile}";
-[ -z "$options" ] && { optionscmd=" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
-[ ! -z "$options" ] && { optionscmd=" ${options} -o BatchMode=yes"; } # TODO Create batch mode toggle (this can cause dangerous breakages is why it should be dedicated)
+[ ! -z "$idfile" ] && idfilecmd=" -i ${idfile}"
+[ -z "$inventory_rich" ] && batch=" -o BatchMode=yes "; [ ! -z "$inventory_rich" ] && batch=" "
+[ -z "$options" ] && { optionscmd="$batch-o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
+[ ! -z "$options" ] && { optionscmd=" ${options} $batch "; }
 
 #######################
 ### Early failures ####
 #######################
 [ -z "$mode" ] || [ -z "$inventory" ] && { show_help && exit 1; }
-[ ! -f "$inventory" ] && { echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."; exit 1; }
+[ ! -f "$inventory" ] || [ ! -f "$inventory_rich" ] && { echo "FATAL: Selected inventory file doesn't seem to exist. Check your pwd."; exit 1; }
+[ "$rich_inventory" -eq 1 ] && { command -v jq >/dev/null 2>&1 || { echo "FATAL: jq is required when using -I"; exit 1; }; }
 [ ! -z "$password" ] && [ -z "$sshpass" ] && { echo "FATAL: sshpass is not available and -p was used"; exit 1; }
 if [ ! -z "$idfile" ]; then # We still continue because you can defer to external configuration for auth id
   [ ! -f "$idfile" ] && { echo "FATAL: Selected private key ${idfile} doesn't seem to exist."; exit 1; }
@@ -306,20 +323,27 @@ launch_job() {
     if [ -n "$extra_string" ]; then
         IFS=' ' read -r -a extra_args <<< "$extra_string"
     fi
-    local ov="${overwrite:-0}"
+    local host_password="${server_passwords[$idx]}"
+    local host_localfile="${server_localfiles[$idx]}"
+    local host_idfile="${server_idfiles[$idx]}"
+    local host_username="${server_usernames[$idx]}"
+    local host_cmd="${server_cmds[$idx]}"
+    local host_remotefile="${server_remotefiles[$idx]}"
+    local host_overwrite="${server_overwrites[$idx]}"
+    local host_sshcmd="${server_sshcmds[$idx]}"
     (
         "${current_runner}" \
             "$server" \
             "$outfile" \
             "$inventory" \
-            "$password" \
-            "$localfile" \
-            "$idfile" \
-            "$username" \
-            "$cmd" \
-            "$remotefile" \
-            "$ov" \
-            "$sshcmd" \
+            "$host_password" \
+            "$host_localfile" \
+            "$host_idfile" \
+            "$host_username" \
+            "$host_cmd" \
+            "$host_remotefile" \
+            "$host_overwrite" \
+            "$host_sshcmd" \
             "${extra_args[@]}"
     ) &
     pids[$idx]=$!
@@ -332,20 +356,101 @@ process_servers() {
         jobs=1
     fi
     usetui=0
-    local -a servers_raw=()
-    mapfile -t servers_raw < "$inventory"
     servers=()
     server_extras=()
-    for entry in "${servers_raw[@]}"; do
-        entry="${entry%%$'\r'}"
-        entry="${entry#"${entry%%[![:space:]]*}"}"
-        [[ -z "${entry}" ]] && continue
-        [[ "${entry:0:1}" == "#" ]] && continue
-        local host rest=""
-        IFS=' ' read -r host rest <<< "$entry"
-        servers+=("$host")
-        server_extras+=("$rest")
-    done
+    server_usernames=()
+    server_passwords=()
+    server_idfiles=()
+    server_localfiles=()
+    server_remotefiles=()
+    server_cmds=()
+    server_overwrites=()
+    server_sshcmds=()
+    if [ "$rich_inventory" -eq 1 ]; then
+        local -a servers_raw=()
+        if ! mapfile -t servers_raw < <(jq -r '
+            def val(x): if x == null then "" else x end;
+            (if type=="array" then .[] else . end)
+            | [val(.host), val(.user), val(.id), val(.password), val(.append), val(.options), val(.localfile), val(.remotefile), val(.command)]
+            | join("\u001f")
+        ' "$inventory"); then
+            echo "FATAL: failed to parse rich inventory (${inventory})"
+            exit 1
+        fi
+        for entry in "${servers_raw[@]}"; do
+            [[ -z "$entry" ]] && continue
+            IFS=$'\x1f' read -r host host_user host_id host_password_raw host_append host_options host_local host_remote host_cmd_raw <<< "$entry"
+            [[ -z "$host" ]] && { echo "FATAL: rich inventory entry missing host"; exit 1; }
+            local resolved_user="$host_user"
+            [ -z "$resolved_user" ] && resolved_user="$username"
+            local resolved_idfile="$host_id"
+            [ -z "$resolved_idfile" ] && resolved_idfile="$idfile"
+            local resolved_local="$host_local"
+            [ -z "$resolved_local" ] && resolved_local="$localfile"
+            local resolved_remote="$host_remote"
+            [ -z "$resolved_remote" ] && resolved_remote="$remotefile"
+            local resolved_cmd="$host_cmd_raw"
+            [ -z "$resolved_cmd" ] && resolved_cmd="$cmd"
+            local resolved_password="$host_password_raw"
+            local resolved_passwordcmd=""
+            if [ -z "$resolved_password" ]; then
+                resolved_password="$password"
+                resolved_passwordcmd="$passwordcmd"
+            else
+                [ -z "$sshpass" ] && { echo "FATAL: sshpass is required for password auth (${host})"; exit 1; }
+                resolved_passwordcmd="sshpass -p ${resolved_password} "
+            fi
+            local resolved_idcmd="$idfilecmd"
+            if [ -n "$resolved_idfile" ]; then
+                resolved_idcmd=" -i ${resolved_idfile}"
+            fi
+            local resolved_optionscmd="$optionscmd"
+            if [ -n "$host_options" ]; then
+                resolved_optionscmd=" ${host_options} -o BatchMode=yes"
+            fi
+            local resolved_overwrite="${overwrite:-0}"
+            local append_value="$host_append"
+            [ -z "$append_value" ] && append_value="$append"
+            if [ -n "$append_value" ]; then
+                case "$append_value" in
+                    "o"|"O"|"overwrite") resolved_overwrite=1 ;;
+                    *) resolved_overwrite=0 ;;
+                esac
+            fi
+            local resolved_sshcmd="${resolved_passwordcmd}ssh${resolved_idcmd}${resolved_optionscmd}"
+            servers+=("$host")
+            server_extras+=("")
+            server_usernames+=("$resolved_user")
+            server_passwords+=("$resolved_password")
+            server_idfiles+=("$resolved_idfile")
+            server_localfiles+=("$resolved_local")
+            server_remotefiles+=("$resolved_remote")
+            server_cmds+=("$resolved_cmd")
+            server_overwrites+=("$resolved_overwrite")
+            server_sshcmds+=("$resolved_sshcmd")
+        done
+    else
+        local -a servers_raw=()
+        mapfile -t servers_raw < "$inventory"
+        for entry in "${servers_raw[@]}"; do
+            entry="${entry%%$'\r'}"
+            entry="${entry#"${entry%%[![:space:]]*}"}"
+            [[ -z "${entry}" ]] && continue
+            [[ "${entry:0:1}" == "#" ]] && continue
+            local host rest=""
+            IFS=' ' read -r host rest <<< "$entry"
+            servers+=("$host")
+            server_extras+=("$rest")
+            server_usernames+=("$username")
+            server_passwords+=("$password")
+            server_idfiles+=("$idfile")
+            server_localfiles+=("$localfile")
+            server_remotefiles+=("$remotefile")
+            server_cmds+=("$cmd")
+            server_overwrites+=("${overwrite:-0}")
+            server_sshcmds+=("$sshcmd")
+        done
+    fi
     total_hosts=${#servers[@]}
     [[ $total_hosts -eq 0 ]] && { cleanup_jobs; trap - EXIT; return; }
     success_hosts=0
@@ -497,6 +602,7 @@ ping_job() {
         if [ $status -eq 0 ]; then
             echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
+            echo "DEBUG: $_sshcmd $_username@$server"
             if echo "$ssh_output" | grep -q "Server accepts key:"; then
                 echo -e "${GREEN}Public key authentication${CLEAR}"
             else
@@ -506,6 +612,7 @@ ping_job() {
         else
             echo -e "${RED}FAILED ${server}${CLEAR}"
             echo "--------------------------------------------------------------"
+            echo "DEBUG: $_sshcmd $_username@$server"
             echo "$ssh_output"
             echo "=============================================================="
         fi
