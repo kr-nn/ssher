@@ -152,11 +152,18 @@ done
 
 [ ! -z $debug ] && echo "Original Command: $origcommand";
 
+rich_mode=0
+if [ ! -z "$inventory_rich" ]; then
+  [ ! -z "$inventory" ] && { echo "FATAL: choose one inventory source (-i or -I)"; exit 1; }
+  inventory="$inventory_rich"
+  rich_mode=1
+fi
+
 # Set mode
 mode="${1:-}"; shift
 
 case "$mode" in
-    test|ping|run|script|upload|collect|update) ;;
+    test|ping|run|script|upload|collect|update|debug) ;;
     ""|*) show_help; exit 1; ;;
 esac
 
@@ -175,16 +182,16 @@ esac
 #######################
 [ -z "$username" ] && username=$USER
 [ ! -z "$idfile" ] && idfilecmd=" -i ${idfile}"
-[ -z "$inventory_rich" ] && batch=" -o BatchMode=yes "; [ ! -z "$inventory_rich" ] && batch=" "
-[ -z "$options" ] && { optionscmd="$batch-o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
-[ ! -z "$options" ] && { optionscmd=" ${options} $batch "; }
+[ "$rich_mode" -eq 0 ] && batch=" -o BatchMode=yes " || batch=" "
+[ -z "$options" ] && { optionscmd="${batch}-o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
+[ ! -z "$options" ] && { optionscmd=" ${options} ${batch} "; }
 
 #######################
 ### Early failures ####
 #######################
-[ -z "$mode" ] || [ -z "$inventory" ] && [ -z "$inventory_rich" ] && { show_help && exit 1; }
-[ ! -f "$inventory" ] && [ ! -f "$inventory_rich" ] && { echo "FATAL: Selected inventory file doesn't seem to exist. Check your pwd."; exit 1; }
-[ -z "$inventory_rich" ] && { command -v jq >/dev/null 2>&1 || { echo "FATAL: jq is required when using -I"; exit 1; }; }
+[ -z "$mode" ] || [ -z "$inventory" ] && { show_help && exit 1; }
+[ ! -f "$inventory" ] && { echo "FATAL: Selected inventory file (${inventory}) doesn't seem to exist. Check your pwd."; exit 1; }
+[ "$rich_mode" -eq 1 ] && { command -v jq >/dev/null 2>&1 || { echo "FATAL: jq is required when using -I"; exit 1; }; }
 [ ! -z "$password" ] && [ -z "$sshpass" ] && { echo "FATAL: sshpass is not available and -p was used"; exit 1; }
 if [ ! -z "$idfile" ]; then # We still continue because you can defer to external configuration for auth id
   [ ! -f "$idfile" ] && { echo "FATAL: Selected private key ${idfile} doesn't seem to exist."; exit 1; }
@@ -356,14 +363,14 @@ process_servers() {
     server_cmds=()
     server_overwrites=()
     server_sshcmds=()
-    if [ ! -z "$inventory_rich" ]; then
+    if [ "$rich_mode" -eq 1 ]; then
         local -a servers_raw=()
         if ! mapfile -t servers_raw < <(jq -r '
             def val(x): if x == null then "" else x end;
             (if type=="array" then .[] else . end)
             | [val(.host), val(.user), val(.id), val(.password), val(.append), val(.options), val(.localfile), val(.remotefile), val(.command)]
             | join("\u001f")
-        ' "$inventory_rich"); then
+        ' "$inventory"); then
             echo "FATAL: failed to parse rich inventory (${inventory})"
             exit 1
         fi
@@ -381,6 +388,7 @@ process_servers() {
             [ -z "$resolved_remote" ] && resolved_remote="$remotefile"
             local resolved_cmd="$host_cmd_raw"
             [ -z "$resolved_cmd" ] && resolved_cmd="$cmd"
+            [ "$mode" == "run" ] || [ "$mode" == "test" ] || [ "$mode" == "debug" ] || resolved_cmd=""
             local resolved_password="$host_password_raw"
             local resolved_passwordcmd=""
             if [ -z "$resolved_password" ]; then
@@ -436,7 +444,9 @@ process_servers() {
             server_idfiles+=("$idfile")
             server_localfiles+=("$localfile")
             server_remotefiles+=("$remotefile")
-            server_cmds+=("$cmd")
+            local inherited_cmd="$cmd"
+            [ "$mode" == "run" ] || [ "$mode" == "test" ] || [ "$mode" == "debug" ] || inherited_cmd=""
+            server_cmds+=("$inherited_cmd")
             server_overwrites+=("${overwrite:-0}")
             server_sshcmds+=("$sshcmd")
         done
