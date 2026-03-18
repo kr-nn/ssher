@@ -228,9 +228,11 @@ esac
 ### command builder ###
 #######################
 [ ! -z "$password" ] && { passwordcmd="sshpass -p ${password} "; passwordcmdredacted="sshpass -p REDACTED "; }
+[ ! -z "$password" ] && { batchmode=" -o BatchMode=no"; }
+[ -z "$password" ] && { batchmode=" -o BatchMode=yes"; }
 
-sshcmdredacted="${passwordcmdredacted}ssh $username@-------${idfilecmd}${optionscmd}"
-sshcmd="${passwordcmd}ssh ${idfilecmd}${optionscmd}"
+sshcmdredacted="${passwordcmdredacted}ssh $username@-------${idfilecmd}${optionscmd}${batchmode}"
+sshcmd="${passwordcmd}ssh ${idfilecmd}${optionscmd}${batchmode}"
 
 #######################
 ### Confirmation ######
