@@ -3,7 +3,7 @@
 # What is this?
 # This is a general tool for SSH and auditability. No need to learn complex software like ansible
 # This is a simpler quicker to RnD ansible
-# This is a simpler tool that uses only 1 dependancy and it's optional: sshpass
+# This is a simpler tool that uses only 1 dependency and it's optional: sshpass
 # Otherwise all you need is a posix compliant shell and ssh
 #
 # What is it not?
@@ -127,7 +127,6 @@ set_opt() {
   SRC[$key]=$src
   printf -v "$key" '%s' "$val"
 }
-
 
 # Parse
 OPTS=$(getopt -o m:i:I:o:u:s:a:pl:r:c:d -l debug:,dryrun:,inventory:,inventory-rich:,options:,user:,username:,append:,idfile:,password,localfile:,remotefile:,cmd:,command: -- "$@") || exit 2
@@ -530,11 +529,12 @@ run_job() {
     shift 11
     local -a extra_args=("$@")
     local ssh_output status
+    ssh_hostname=$($_sshcmd "${_username}@${server}" "hostname" 2>&1 )
     ssh_output=$($_sshcmd "${_username}@${server}" "${_cmd}" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo -e "${GREEN}SUCCESS ${server} | Hostname: ${ssh_hostname}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -563,11 +563,12 @@ script_job() {
     shift 11
     local -a extra_args=("$@")
     local ssh_output status
+    ssh_hostname=$($_sshcmd "${_username}@${server}" "hostname" 2>&1 )
     ssh_output=$($_sshcmd "${_username}@${server}" 'bash -s' < "$_localfile" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo -e "${GREEN}SUCCESS ${server} | Hostname: ${ssh_hostname}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "$ssh_output"
             echo "=============================================================="
@@ -596,11 +597,12 @@ ping_job() {
     shift 11
     local -a extra_args=("$@")
     local ssh_output status
+    ssh_hostname=$($_sshcmd "${_username}@${server}" "hostname" 2>&1 )
     ssh_output=$($_sshcmd "${_username}@${server}" -v exit 0 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo -e "${GREEN}SUCCESS ${server} | Hostname: ${ssh_hostname}${CLEAR}"
             echo "--------------------------------------------------------------"
             if echo "$ssh_output" | grep -q "Server accepts key:"; then
                 echo -e "${GREEN}Public key authentication${CLEAR}"
@@ -635,11 +637,12 @@ upload_job() {
     local ov=">>"
     [ "$_overwrite" -eq 1 ] 2>/dev/null && ov=">"
     local ssh_output status
+    ssh_hostname=$($_sshcmd "${_username}@${server}" "hostname" 2>&1 )
     ssh_output=$($_sshcmd "${_username}@${server}" "cat $ov ${_remotefile}" < "$_localfile" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo -e "${GREEN}SUCCESS ${server} | Hostname: ${ssh_hostname}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "Wrote: $_localfile"
             echo "To: $_remotefile"
@@ -670,11 +673,12 @@ collect_job() {
     local -a extra_args=("$@")
     local data_file="${outfile}.data"
     local ssh_output status
+    ssh_hostname=$($_sshcmd "${_username}@${server}" "hostname" 2>&1 )
     ssh_output=$($_sshcmd "${_username}@${server}" "cat ${_remotefile}" > "$data_file" 2>&1 )
     status=$?
     {
         if [ $status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo -e "${GREEN}SUCCESS ${server} | Hostname: ${ssh_hostname}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "Wrote: $_remotefile"
             echo "To: $_localfile"
@@ -707,6 +711,7 @@ update_job() {
     [ "$_overwrite" -eq 1 ] 2>/dev/null && ov=">"
     local content ssh_output status
     content=$(sed -n "/^##\$\$##| ${server} |##\$\$##$/,/^##\$\$##| /{ /^##\$\$##| ${server} |##\$\$##$/d; /^##\$\$##| /d; p; }" "$_localfile" | sed '/^$/d')
+    ssh_hostname=$($_sshcmd "${_username}@${server}" "hostname" 2>&1 )
     ssh_output=$($_sshcmd "${_username}@${server}" "echo $content $ov $_remotefile" 2>&1 )
     status=$?
     local _sshcmd="${11}"
@@ -715,7 +720,7 @@ update_job() {
     {
         echo "# ============================ ${server} ==================================="
         if [ $status -eq 0 ]; then
-            echo -e "${GREEN}SUCCESS ${server}${CLEAR}"
+            echo -e "${GREEN}SUCCESS ${server} | Hostname: ${ssh_hostname}${CLEAR}"
             echo "--------------------------------------------------------------"
             echo "Wrote: $_localfile"
             echo "To: $_remotefile"
