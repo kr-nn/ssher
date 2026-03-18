@@ -21,7 +21,7 @@
       mkdir -p $out/bin
       cp $src $out/bin/ssher
       chmod +x $out/bin/ssher
-      wrapProgram $out/bin/ssher --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.sshpass ] }
+      wrapProgram $out/bin/ssher --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.sshpass pkgs.jq ] }
     '';
     };
   };
