@@ -57,7 +57,7 @@ $(printf '=%.0s' $(seq 1 $(tput cols)))
  ${RED}
  ${RED}   -o options             ${GREEN}define custom ssh options
  ${RED}                          ${GREEN}just like in normal ssh you can pass -o options.
- ${RED}                          ${GREEN}by default stricthostchecking is disabled, connection timeouts are set to 8 seconds, and batchmode is activated
+ ${RED}                          ${GREEN}by default stricthostchecking is disabled, connection timeouts are set to 8 seconds (batch mode is handled automatically, don't use batchmode)
  ${RED}                          ${GREEN}this is not limited to -o you can pass ANY ssh options to this flag
  ${RED}                          ${GREEN}If you use this option stricthostchecking and the connectiontimout options are removed, you will need to add them again
  ${RED}
@@ -181,9 +181,8 @@ esac
 #######################
 [ -z "$username" ] && username=$USER
 [ ! -z "$idfile" ] && idfilecmd=" -i ${idfile}"
-[ "$rich_mode" -eq 0 ] && batch=" -o BatchMode=yes " || batch=" "
-[ -z "$options" ] && { optionscmd="${batch}-o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
-[ ! -z "$options" ] && { optionscmd=" ${options} ${batch} "; }
+[ -z "$options" ] && { optionscmd=" -o StrictHostKeyChecking=no -o ConnectTimeout=3"; }
+[ ! -z "$options" ] && { optionscmd=" ${options} "; }
 
 #######################
 ### Early failures ####
@@ -402,7 +401,9 @@ process_servers() {
                 resolved_idcmd=" -i ${resolved_idfile}"
             fi
             local resolved_optionscmd="$optionscmd"
-            if [ -n "$host_options" ]; then
+            if [ -n "$resolved_password" ]; then
+                resolved_optionscmd=" ${host_options} -o BatchMode=no"
+            else
                 resolved_optionscmd=" ${host_options} -o BatchMode=yes"
             fi
             local resolved_overwrite="${overwrite:-0}"
