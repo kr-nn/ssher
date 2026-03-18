@@ -3,7 +3,7 @@
 # What is this?
 # This is a general tool for SSH and auditability. No need to learn complex software like ansible
 # This is a simpler quicker to RnD ansible
-# This is a simpler tool that uses only 1 dependency and it's optional: sshpass
+# This is a simpler tool that uses only 2 dependencies and both are optional: sshpass (for standard password use) | jq (for rich inventory)
 # Otherwise all you need is a posix compliant shell and ssh
 #
 # What is it not?
